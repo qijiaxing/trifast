@@ -13,6 +13,21 @@ from trifast.triton import (
     _bwd_b,
 )
 
+# Value the kernels substitute for a masked score. NOT torch.finfo(q.dtype).min, which
+# is what the reference's masked_fill_ uses and what this file used to pass: the kernels
+# convert scores to log2 units, and finfo(fp32).min * 1.4427 overflows fp32 to -inf.
+#
+# Unlike flex's identically-valued MASK_FILL (see flex/flex.py), nothing here depends on
+# the magnitude being *large* either -- the forward stores the row max and the softmax
+# denominator separately, so a fully-masked row never needs SENTINEL + log(N) to stay
+# distinguishable from SENTINEL. The one requirement is that a masked key sitting next
+# to valid ones gets exactly zero weight, i.e. exp2((SENTINEL - max_score) * inv_ln2)
+# underflows; -1e4 leaves a huge margin, holding for score magnitudes up to ~1e3. Chosen
+# to match flex so the two backends' lse are directly comparable.
+#
+# Lives in fp32 score space, so one value serves every input dtype.
+MASK_FILL = -1e4
+
 
 @triton_op("trifast::triangle_attention", mutates_args={})
 def _triangle_attention(
@@ -21,7 +36,14 @@ def _triangle_attention(
     v: torch.Tensor,
     b: torch.Tensor,
     mask: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Returns (o, lse, mx, dn).
+
+    `lse` is the natural-log logsumexp, the same convention flex and protenix return,
+    and is for callers and diagnostics only. The backward consumes `mx` (the softmax row
+    max, in log2 units) and `dn` (the softmax denominator) instead -- see _fwd for why
+    the unfused pair is what makes a fully-masked row's gradient exact.
+    """
     sm_scale = q.shape[-1] ** -0.5
 
     bs, h, _, n, dim = q.shape
@@ -40,29 +62,34 @@ def _triangle_attention(
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
 
     o = torch.zeros_like(q)
-    l = torch.zeros((bh, n, n), device=q.device, dtype=torch.float32)
+    # _fwd takes a single set of strides for these three, so keep them identical.
+    lse = torch.zeros((bh, n, n), device=q.device, dtype=torch.float32)
+    mx = torch.zeros_like(lse)
+    dn = torch.zeros_like(lse)
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
 
     # fmt: off
     wrap_triton(_fwd)[grid](
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-        l, l.stride(0), l.stride(1), l.stride(2),
+        lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         b, b.stride(0), b.stride(1), b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
-        neg_inf=torch.finfo(q.dtype).min,
+        neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
     )
 
 
-    l = rearrange(l, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
     o = rearrange(o, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+    lse = rearrange(lse, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+    mx = rearrange(mx, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+    dn = rearrange(dn, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
 
-    return o, l
+    return o, lse, mx, dn
 
 
 @triton_op(
@@ -76,7 +103,8 @@ def triangle_attention_bwd(
     v: torch.Tensor,
     b: torch.Tensor,
     o: torch.Tensor,
-    l: torch.Tensor,
+    mx: torch.Tensor,
+    dn: torch.Tensor,
     mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     bs, h, *_ = q.shape
@@ -87,7 +115,8 @@ def triangle_attention_bwd(
     v = rearrange(v, "b h ... -> (b h) ...")
     b = rearrange(b, "b h ... -> (b h) ...")
     o = rearrange(o, "b h ... -> (b h) ...")
-    l = rearrange(l, "b h ... -> (b h) ...")
+    mx = rearrange(mx, "b h ... -> (b h) ...")
+    dn = rearrange(dn, "b h ... -> (b h) ...")
     do = rearrange(do, "b h ... -> (b h) ...")
 
     bh, _, n, dim = q.shape
@@ -101,7 +130,10 @@ def triangle_attention_bwd(
     db = torch.zeros_like(b)
     dmask = torch.zeros_like(mask)  # Don't need grads, but torch expects a tensor
 
-    d = torch.zeros((bh, n, n), dtype=q.dtype, device=q.device)
+    # fp32, not q.dtype: delta enters the cancellation-prone (dsm_value - delta) that
+    # _bwd_kv and _bwd_b read back, and rounding it to bf16 there was the most likely
+    # reason db was the weakest of the five gradients.
+    d = torch.zeros((bh, n, n), dtype=torch.float32, device=q.device)
 
     def q_grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
@@ -114,13 +146,13 @@ def triangle_attention_bwd(
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         b, b.stride(0), b.stride(1), b.stride(2),
-        l, l.stride(0), l.stride(1), l.stride(2),
+        mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
         dq, dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
         sm_scale=sm_scale,
-        neg_inf=torch.finfo(q.dtype).min,
+        neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
     )
@@ -137,13 +169,13 @@ def triangle_attention_bwd(
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         b, b.stride(0), b.stride(1), b.stride(2),
-        l, l.stride(0), l.stride(1), l.stride(2),
+        mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
         dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
         dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
         sm_scale=sm_scale,
-        neg_inf=torch.finfo(q.dtype).min,
+        neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
     )
@@ -163,12 +195,12 @@ def triangle_attention_bwd(
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         b, b.stride(0), b.stride(1), b.stride(2),
-        l, l.stride(0), l.stride(1), l.stride(2),
+        mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
         db, db.stride(0), db.stride(1), db.stride(2),
         sm_scale=sm_scale,
-        neg_inf=torch.finfo(q.dtype).min,
+        neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
     )
@@ -192,7 +224,7 @@ def backwards(
     Bool[torch.Tensor, "b n n"],  # dmask
 ]:
     do = grad[0]
-    q, k, v, b, mask, o, l = ctx.saved_tensors
+    q, k, v, b, mask, o, mx, dn = ctx.saved_tensors
     dq, dk, dv, db, dmask = triangle_attention_bwd(
         do,
         q,
@@ -200,7 +232,8 @@ def backwards(
         v,
         b,
         o,
-        l,
+        mx,
+        dn,
         mask,
     )
 
@@ -209,9 +242,11 @@ def backwards(
 
 def setup_context(ctx, inputs, output) -> None:
     q, k, v, b, mask, *_ = inputs
-    o, l = output
+    # lse is deliberately not saved: it is a convenience for callers, and the backward
+    # reads the unfused (mx, dn) pair instead.
+    o, _lse, mx, dn = output
 
-    ctx.save_for_backward(q, k, v, b, mask, o, l)
+    ctx.save_for_backward(q, k, v, b, mask, o, mx, dn)
 
 
 _triangle_attention.register_autograd(backwards, setup_context=setup_context)
@@ -224,5 +259,5 @@ def triangle_attention(
     b: Float[torch.Tensor, "b h n n"],
     mask: Bool[torch.Tensor, "b n n"],
 ) -> Float[torch.Tensor, "b h n n d"]:
-    o, _ = _triangle_attention(q, k, v, b, mask)
+    o, *_ = _triangle_attention(q, k, v, b, mask)
     return o
