@@ -124,16 +124,17 @@ def triangle_attention_bwd(
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
 
-    dq = torch.zeros_like(q)
-    dk = torch.zeros_like(k)
-    dv = torch.zeros_like(v)
-    db = torch.zeros_like(b)
-    dmask = torch.zeros_like(mask)  # Don't need grads, but torch expects a tensor
+    # Every valid element of these outputs is overwritten by a non-atomic store.
+    dq = torch.empty_like(q)
+    dk = torch.empty_like(k)
+    dv = torch.empty_like(v)
+    db = torch.empty_like(b)
+    dmask = torch.zeros_like(mask)  # Don't need grads, but torch expects a zero tensor
 
     # fp32, not q.dtype: delta enters the cancellation-prone (dsm_value - delta) that
     # _bwd_kv and _bwd_b read back, and rounding it to bf16 there was the most likely
-    # reason db was the weakest of the five gradients.
-    d = torch.zeros((bh, n, n), dtype=torch.float32, device=q.device)
+    # reason db was the weakest of the five gradients. _bwd_q overwrites every element.
+    d = torch.empty((bh, n, n), dtype=torch.float32, device=q.device)
 
     def q_grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
