@@ -1,16 +1,5 @@
 """
-Fused Attention
-===============
-
 This is a Triton implementation of the Flash Attention v2 algorithm from Tri Dao (https://tridao.me/publications/flash2/flash2.pdf)
-
-Credits: OpenAI kernel team
-
-Extra Credits:
-
-* Original flash attention paper (https://arxiv.org/abs/2205.14135)
-* Rabe and Staats (https://arxiv.org/pdf/2112.05682v2.pdf)
-
 """
 
 import pytest
@@ -699,7 +688,7 @@ except BaseException:
     HAS_FLASH = False
 
 TORCH_HAS_FP8 = False
-BATCH, N_HEADS = 1, 8
+BATCH, N_HEADS = 512, 8
 # vary seq length for fixed head and batch=4
 configs = []
 for HEAD_DIM in [32, ]:
@@ -711,7 +700,7 @@ for HEAD_DIM in [32, ]:
                 configs.append(
                     triton.testing.Benchmark(
                         x_names=["N_CTX"],
-                        x_vals=[2**i for i in range(10, 15)],
+                        x_vals=[2**i for i in range(10, 13)],
                         line_arg="provider",
                         line_vals=["triton-fp16"] + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
                         (["flash"] if HAS_FLASH else []),

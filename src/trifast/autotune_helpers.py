@@ -58,6 +58,7 @@ def dict_to_config(d: dict) -> triton.Config:
 _fwd_configs = [
     triton.Config(kwargs={"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config(kwargs={"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+    triton.Config(kwargs={"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=1),
 ]
 if FORCE_TUNE:
     _fwd_configs.extend(
@@ -79,7 +80,6 @@ if FORCE_TUNE:
             triton.Config({"BLOCK_J": 16, "BLOCK_K": 16}, num_warps=8, num_stages=1),
             triton.Config({"BLOCK_J": 32, "BLOCK_K": 64}, num_warps=8, num_stages=1),
             triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=1),
-            triton.Config({"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=1),
             triton.Config({"BLOCK_J": 16, "BLOCK_K": 32}, num_warps=8, num_stages=2),
             triton.Config({"BLOCK_J": 32, "BLOCK_K": 128}, num_warps=4, num_stages=2),
         ]
@@ -88,6 +88,7 @@ if FORCE_TUNE:
 _bwd_q_configs = [
     triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+    triton.Config({"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=3),
 ]
 if FORCE_TUNE:
     _bwd_q_configs.extend(
@@ -120,6 +121,7 @@ _bwd_kv_configs = [
     triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=2),
     triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+    triton.Config({"BLOCK_J": 128, "BLOCK_K": 64}, num_warps=8, num_stages=2),
 ]
 
 if FORCE_TUNE:
@@ -151,6 +153,7 @@ if FORCE_TUNE:
 _bwd_b_configs = [
     triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
+    triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=8, num_stages=2),
 ]
 
 if FORCE_TUNE:
