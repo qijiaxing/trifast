@@ -6,6 +6,7 @@ input to the backward-kv and backward-bias kernels.  Those prerequisite
 launches happen before timing starts.
 """
 
+import argparse
 import math
 from pathlib import Path
 from typing import Callable
@@ -22,6 +23,19 @@ from trifast.utils import gen_tensors
 
 N_VALUES = [512, 640, 768, 800, 1024]
 DTYPES = [torch.bfloat16]
+KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b")
+KERNEL_NAMES = {
+    "fwd": "Forward",
+    "bwd_q": "Backward Q",
+    "bwd_kv": "Backward K/V",
+    "bwd_b": "Backward Bias",
+}
+KERNEL_STYLES = {
+    "fwd": ("blue", "-"),
+    "bwd_q": ("green", "-"),
+    "bwd_kv": ("orange", "-"),
+    "bwd_b": ("red", "-"),
+}
 
 # Number of matrix multiplications performed by each kernel.  One matrix
 # multiplication costs 2 * batch * h * n^3 * d FLOPs.  This is the standard
@@ -41,39 +55,22 @@ def _kernel_tflops(n: int, h: int, d: int, kernel: str, ms: float) -> float:
     return total_flops * 1e-9 / ms
 
 
-def _report(mode: str, dtype: torch.dtype) -> triton.testing.Benchmark:
-    kernels = ["fwd"] if mode == "fwd" else ["bwd_q", "bwd_kv", "bwd_b"]
-    names = {
-        "fwd": "forward",
-        "bwd_q": "backward q",
-        "bwd_kv": "backward k/v",
-        "bwd_b": "backward bias",
-    }
-    styles = {
-        "fwd": ("blue", "-"),
-        "bwd_q": ("green", "-"),
-        "bwd_kv": ("orange", "-"),
-        "bwd_b": ("red", "-"),
-    }
-
+def _report(
+    dtype: torch.dtype,
+    kernels: tuple[str, ...],
+) -> triton.testing.Benchmark:
+    selection = "all" if kernels == KERNELS else "-".join(kernels)
     return triton.testing.Benchmark(
         x_names=["n"],
         x_vals=N_VALUES,
         line_arg="kernel",
-        line_vals=kernels,
-        line_names=[names[kernel] for kernel in kernels],
-        styles=[styles[kernel] for kernel in kernels],
+        line_vals=list(kernels),
+        line_names=[KERNEL_NAMES[kernel] for kernel in kernels],
+        styles=[KERNEL_STYLES[kernel] for kernel in kernels],
         ylabel="TFLOP/s",
-        plot_name=f"tri_attn_kernels_{mode}_{dtype}",
-        args={"mode": mode, "dtype": dtype},
+        plot_name=f"tri_attn_kernels_{selection}_{dtype}",
+        args={"dtype": dtype},
     )
-
-
-configs = [
-    _report(mode, dtype)
-    for mode in ("fwd", "bwd")
-    for dtype in DTYPES
-]
 
 
 def _make_launchers(
@@ -353,15 +350,10 @@ def _make_launchers(
     }
 
 
-@triton.testing.perf_report(configs)
-def benchmark(n, mode, dtype, kernel):
+def benchmark(n, dtype, kernel):
     """Measure only ``kernel``; prerequisite kernel launches are not timed."""
-    expected_kernels = {
-        "fwd": {"fwd"},
-        "bwd": {"bwd_q", "bwd_kv", "bwd_b"},
-    }
-    if mode not in expected_kernels or kernel not in expected_kernels[mode]:
-        raise ValueError(f"invalid mode/kernel combination: {mode}/{kernel}")
+    if kernel not in KERNELS:
+        raise ValueError(f"unknown kernel: {kernel}")
 
     # AlphaFold 3 uses d=32.  Keep h=8 to match the intended kernel benchmark.
     d = 32
@@ -372,7 +364,7 @@ def benchmark(n, mode, dtype, kernel):
 
         # Populate o/mx/dn.  All backward kernels consume these values.
         launchers["fwd"]()
-        if mode == "bwd":
+        if kernel != "fwd":
             # Populate delta.  This also compiles/tunes bwd_q before bwd_q itself
             # is timed and supplies the input needed by bwd_kv and bwd_b.
             launchers["bwd_q"]()
@@ -427,22 +419,20 @@ def _print_table(
     print(border("└", "┴", "┘"))
 
 
-def _print_perf_tables(result_dfs) -> None:
-    """Combine each dtype's forward/backward reports into one readable table."""
-    headers = ("N", "Forward", "Backward Q", "Backward K/V", "Backward Bias")
+def _print_perf_tables(result_dfs, kernels: tuple[str, ...]) -> None:
+    """Print one readable throughput table for each dtype."""
+    headers = ("N", *(KERNEL_NAMES[kernel] for kernel in kernels))
 
-    for index, dtype in enumerate(DTYPES):
-        fwd_df = result_dfs[index * 2]
-        bwd_df = result_dfs[index * 2 + 1]
+    for dtype, result_df in zip(DTYPES, result_dfs):
         rows = [
             (
-                str(int(fwd_df.iloc[row_index, 0])),
-                f"{fwd_df.iloc[row_index, 1]:.2f}",
-                f"{bwd_df.iloc[row_index, 1]:.2f}",
-                f"{bwd_df.iloc[row_index, 2]:.2f}",
-                f"{bwd_df.iloc[row_index, 3]:.2f}",
+                str(int(result_df.iloc[row_index, 0])),
+                *(
+                    f"{result_df.iloc[row_index, column_index]:.2f}"
+                    for column_index in range(1, len(kernels) + 1)
+                ),
             )
-            for row_index in range(len(fwd_df))
+            for row_index in range(len(result_df))
         ]
         dtype_name = {
             torch.bfloat16: "BF16",
@@ -456,15 +446,40 @@ def _print_perf_tables(result_dfs) -> None:
         )
 
 
-if __name__ == "__main__":
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Benchmark individual TriFast Triton kernels.",
+    )
+    parser.add_argument(
+        "-k",
+        "--kernels",
+        nargs="+",
+        choices=KERNELS,
+        default=list(KERNELS),
+        help="kernels to benchmark (default: all four)",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    # Preserve the requested order while avoiding duplicate benchmark runs.
+    kernels = tuple(dict.fromkeys(args.kernels))
+    configs = [_report(dtype, kernels) for dtype in DTYPES]
+    runner = triton.testing.perf_report(configs)(benchmark)
+
     out_dir = Path(__file__).parent.parent
     save_path = out_dir / "benchmark" / device_name / "flops"
     save_path.mkdir(parents=True, exist_ok=True)
-    result_dfs = benchmark.run(
+    result_dfs = runner.run(
         print_data=False,
         show_plots=False,
         save_path=str(save_path),
         save_precision=2,
         return_df=True,
     )
-    _print_perf_tables(result_dfs)
+    _print_perf_tables(result_dfs, kernels)
+
+
+if __name__ == "__main__":
+    main()
