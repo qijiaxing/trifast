@@ -29,7 +29,7 @@ from trifast.autotune_helpers import (
 # fmt: off
 @autotune(
     configs=_fwd_configs,
-    key=["N", "H", "DIM", "CLOSEST_N"],
+    key=["H", "DIM", "CLOSEST_N"],
     prune_configs_by={"early_config_prune": prune_fwd_configs},
 )
 @triton.jit
@@ -45,7 +45,7 @@ def _fwd(
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
     sm_scale,
     neg_inf,
-    N: tl.constexpr, H, DIM: tl.constexpr,
+    N, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
@@ -200,7 +200,7 @@ def _fwd_finalize(
     stride_maskn,
     sm_scale,
     neg_inf,
-    N: tl.constexpr,
+    N,
     H,
     DIM: tl.constexpr,
     BLOCK_J: tl.constexpr,
