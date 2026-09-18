@@ -5,7 +5,6 @@ from pathlib import Path
 import platformdirs
 from importlib.metadata import version
 
-
 FORCE_TUNE = os.getenv("TRIFAST_FORCE_TUNE", "0").lower() in (
     "1",
     "true",
@@ -43,6 +42,8 @@ def config_to_dict(config: triton.Config) -> dict:
         "kwargs": config.kwargs,
         "num_warps": config.num_warps,
         "num_stages": config.num_stages,
+        "num_ctas": config.num_ctas,
+        "maxnreg": config.maxnreg,
     }
 
 
@@ -51,15 +52,29 @@ def dict_to_config(d: dict) -> triton.Config:
         kwargs=d["kwargs"],
         num_warps=d["num_warps"],
         num_stages=d["num_stages"],
+        num_ctas=d.get("num_ctas", 1),
+        maxnreg=d.get("maxnreg"),
     )
 
 
 # Base configs targeting H20
 _fwd_configs = [
+    triton.Config(
+        kwargs={"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3, maxnreg=80
+    ),
     triton.Config(kwargs={"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config(kwargs={"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config(kwargs={"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=1),
 ]
+
+
+def prune_fwd_configs(configs, named_args, **kwargs):
+    """Use the H20 register cap for small heads; it cannot compile DIM=128."""
+    if kwargs["DIM"] <= 64:
+        return [configs[0]]
+    return [config for config in configs if config.maxnreg is None]
+
+
 if FORCE_TUNE:
     _fwd_configs.extend(
         [

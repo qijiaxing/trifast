@@ -4,6 +4,7 @@ import triton.language as tl
 from trifast.autotune import autotune
 from trifast.autotune_helpers import (
     _fwd_configs,
+    prune_fwd_configs,
     _bwd_kv_configs,
     _bwd_q_configs,
     _bwd_b_configs,
@@ -29,6 +30,7 @@ from trifast.autotune_helpers import (
 @autotune(
     configs=_fwd_configs,
     key=["N", "H", "DIM", "CLOSEST_N"],
+    prune_configs_by={"early_config_prune": prune_fwd_configs},
 )
 @triton.jit
 def _fwd(
