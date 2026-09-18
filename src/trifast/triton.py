@@ -58,7 +58,7 @@ def _fwd(
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
     sm_scale,
     neg_inf,
-    N, H, DIM: tl.constexpr,
+    N: tl.constexpr, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
