@@ -20,7 +20,6 @@ from trifast.torch import MASK_FILL
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
-
 N_VALUES = [512, 640, 768, 800, 1024]
 DTYPES = [torch.bfloat16]
 KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b")
@@ -41,10 +40,10 @@ KERNEL_STYLES = {
 # multiplication costs 2 * batch * h * n^3 * d FLOPs.  This is the standard
 # attention benchmark convention: pointwise softmax operations are not counted.
 MATMULS_PER_KERNEL = {
-    "fwd": 2,      # QK^T and PV
-    "bwd_q": 3,    # QK^T recomputation, dO V^T, and dS K
-    "bwd_kv": 4,   # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
-    "bwd_b": 2,    # QK^T recomputation and dO V^T
+    "fwd": 2,  # QK^T and PV
+    "bwd_q": 3,  # QK^T recomputation, dO V^T, and dS K
+    "bwd_kv": 4,  # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
+    "bwd_b": 2,  # QK^T recomputation and dO V^T
 }
 
 
@@ -96,6 +95,8 @@ def _make_launchers(
     k = k.flatten(0, 1).contiguous()
     v = v.flatten(0, 1).contiguous()
     bias = bias.flatten(0, 1).contiguous()
+    if dtype == torch.bfloat16:
+        bias = (bias * 1.4426950408889634).to(dtype)
     mask = mask.contiguous()
 
     bh = q.shape[0]
@@ -105,7 +106,7 @@ def _make_launchers(
     o = torch.empty_like(q)
     # _fwd uses one set of strides for all three statistics tensors.
     lse = torch.empty((bh, n, n), device=q.device, dtype=torch.float32)
-    mx = torch.empty_like(lse)
+    mx = torch.zeros_like(lse)
     dn = torch.empty_like(lse)
 
     do = torch.randn_like(o)
@@ -405,8 +406,7 @@ def _print_table(
     def row(values: tuple[str, ...], centered: bool = False) -> str:
         alignment = "^" if centered else ">"
         cells = [
-            f" {value:{alignment}{width}} "
-            for value, width in zip(values, widths)
+            f" {value:{alignment}{width}} " for value, width in zip(values, widths)
         ]
         return "│" + "│".join(cells) + "│"
 

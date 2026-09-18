@@ -8,6 +8,7 @@ import triton.testing
 
 from trifast.triton import (
     _fwd,
+    _fwd_finalize,
     _bwd_kv,
     _bwd_q,
     _bwd_b,
@@ -18,12 +19,10 @@ from trifast.triton import (
 # convert scores to log2 units, and finfo(fp32).min * 1.4427 overflows fp32 to -inf.
 #
 # Unlike flex's identically-valued MASK_FILL (see flex/flex.py), nothing here depends on
-# the magnitude being *large* either -- the forward stores the row max and the softmax
-# denominator separately, so a fully-masked row never needs SENTINEL + log(N) to stay
-# distinguishable from SENTINEL. The one requirement is that a masked key sitting next
-# to valid ones gets exactly zero weight, i.e. exp2((SENTINEL - max_score) * inv_ln2)
-# underflows; -1e4 leaves a huge margin, holding for score magnitudes up to ~1e3. Chosen
-# to match flex so the two backends' lse are directly comparable.
+# the magnitude being *large* either -- the stable fallback stores its normalization
+# offset and denominator separately, so a fully-masked row never needs SENTINEL + log(N)
+# to stay distinguishable from SENTINEL. The one requirement is that a masked key next
+# to valid ones gets exactly zero weight. -1e4 leaves a large margin and matches flex.
 #
 # Lives in fp32 score space, so one value serves every input dtype.
 MASK_FILL = -1e4
@@ -40,9 +39,8 @@ def _triangle_attention(
     """Returns (o, lse, mx, dn).
 
     `lse` is the natural-log logsumexp, the same convention flex and protenix return,
-    and is for callers and diagnostics only. The backward consumes `mx` (the softmax row
-    max, in log2 units) and `dn` (the softmax denominator) instead -- see _fwd for why
-    the unfused pair is what makes a fully-masked row's gradient exact.
+    and is for callers and diagnostics only. The backward consumes `mx` (the base-two
+    normalization offset) and `dn` (the corresponding denominator) instead.
     """
     sm_scale = q.shape[-1] ** -0.5
 
@@ -53,6 +51,7 @@ def _triangle_attention(
     k = rearrange(k, "b h ... -> (b h) ...").contiguous()
     v = rearrange(v, "b h ... -> (b h) ...").contiguous()
     b = rearrange(b, "b h ... -> (b h) ...").contiguous()
+    fwd_b = (b * 1.4426950408889634).to(q.dtype) if q.dtype == torch.bfloat16 else b
     mask = mask.contiguous()
 
     # e.g. batch x head
@@ -76,11 +75,23 @@ def _triangle_attention(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        b, b.stride(0), b.stride(1), b.stride(2),
+        fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+    )
+
+    wrap_triton(_fwd_finalize)[(n, bh)](
+        o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+        lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
+        q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+        k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+        v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
+        mask, mask.stride(0), mask.stride(1), mask.stride(2),
+        sm_scale=sm_scale, neg_inf=MASK_FILL, N=n, H=h, DIM=dim,
+        BLOCK_J=64, BLOCK_K=32, num_warps=4, num_stages=3,
     )
 
 
@@ -114,6 +125,7 @@ def triangle_attention_bwd(
     k = rearrange(k, "b h ... -> (b h) ...")
     v = rearrange(v, "b h ... -> (b h) ...")
     b = rearrange(b, "b h ... -> (b h) ...")
+    kernel_b = (b * 1.4426950408889634).to(q.dtype) if q.dtype == torch.bfloat16 else b
     o = rearrange(o, "b h ... -> (b h) ...")
     mx = rearrange(mx, "b h ... -> (b h) ...")
     dn = rearrange(dn, "b h ... -> (b h) ...")
@@ -146,7 +158,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        b, b.stride(0), b.stride(1), b.stride(2),
+        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
@@ -169,7 +181,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        b, b.stride(0), b.stride(1), b.stride(2),
+        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
@@ -195,7 +207,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        b, b.stride(0), b.stride(1), b.stride(2),
+        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
@@ -215,9 +227,7 @@ def triangle_attention_bwd(
     return dq, dk, dv, db, dmask
 
 
-def backwards(
-    ctx, *grad: tuple[Float[torch.Tensor, "b h n n d"],]
-) -> tuple[
+def backwards(ctx, *grad: tuple[Float[torch.Tensor, "b h n n d"],]) -> tuple[
     Float[torch.Tensor, "b h n n d"],  # dq
     Float[torch.Tensor, "b h n n d"],  # dk
     Float[torch.Tensor, "b h n n d"],  # dv
