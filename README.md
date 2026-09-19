@@ -3,20 +3,34 @@
 This is TriFast fork, which is optimized for Hopper GPU.
 
 `python scripts/bench_kernels.py` can be used to run benchmark.
+`src/trifast/triton.py` contains the fwd and bwd kernels.
 
 ## Perf
 
 H20 GPU, H = 8, D = 32.
+
+### Forward optimizations
+
+The forward kernel is tuned for the crop-size-varying training workload:
+
+- `N` is a runtime value, while `CLOSEST_N` remains a compile-time bucket, avoiding a separate kernel variant for every crop size.
+- The Hopper configuration uses `BLOCK_J=64`, `BLOCK_K=32`, four warps, three pipeline stages, and an 80-register cap for head dimensions up to 64.
+- With the BF16 fixed-offset fast path disabled by default, the stable online-softmax path computes LSE directly in `_fwd` and skips the separate `_fwd_finalize` launch.
+- The optional BF16 fixed-offset path is still available through `USE_FAST_PATH`, but the results below use `USE_FAST_PATH=False`.
+
+The forward column was remeasured after these changes. The backward columns retain the previous benchmark results.
+
+### Kernel throughput
 
 ```
 TriFast individual-kernel throughput — BF16 (TFLOP/s)
 ┌──────┬─────────┬────────────┬──────────────┬───────────────┐
 │  N   │ Forward │ Backward Q │ Backward K/V │ Backward Bias │
 ├──────┼─────────┼────────────┼──────────────┼───────────────┤
-│  512 │   76.51 │      94.16 │        68.46 │         67.38 │
-│  640 │   78.13 │      95.84 │        70.02 │         70.13 │
-│  768 │   79.17 │      97.10 │        70.50 │         71.58 │
-│  800 │   76.37 │      93.59 │        65.34 │         68.47 │
-│ 1024 │   80.83 │      98.36 │        71.92 │         72.86 │
+│  512 │   78.41 │      94.16 │        68.46 │         67.38 │
+│  640 │   80.03 │      95.84 │        70.02 │         70.13 │
+│  768 │   81.25 │      97.10 │        70.50 │         71.58 │
+│  800 │   78.38 │      93.59 │        65.34 │         68.47 │
+│ 1024 │   82.73 │      98.36 │        71.92 │         72.86 │
 └──────┴─────────┴────────────┴──────────────┴───────────────┘
 ```

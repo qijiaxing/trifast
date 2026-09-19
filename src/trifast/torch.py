@@ -26,6 +26,7 @@ from trifast.triton import (
 #
 # Lives in fp32 score space, so one value serves every input dtype.
 MASK_FILL = -1e4
+USE_FAST_PATH = False
 
 
 @triton_op("trifast::triangle_attention", mutates_args={})
@@ -51,7 +52,11 @@ def _triangle_attention(
     k = rearrange(k, "b h ... -> (b h) ...").contiguous()
     v = rearrange(v, "b h ... -> (b h) ...").contiguous()
     b = rearrange(b, "b h ... -> (b h) ...").contiguous()
-    fwd_b = (b * 1.4426950408889634).to(q.dtype) if q.dtype == torch.bfloat16 else b
+    fwd_b = (
+        (b * 1.4426950408889634).to(q.dtype)
+        if USE_FAST_PATH and q.dtype == torch.bfloat16
+        else b
+    )
     mask = mask.contiguous()
 
     # e.g. batch x head
@@ -80,19 +85,22 @@ def _triangle_attention(
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+        USE_FAST_PATH=USE_FAST_PATH,
     )
 
-    wrap_triton(_fwd_finalize)[(n, bh)](
-        o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-        lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
-        q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-        k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-        v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
-        mask, mask.stride(0), mask.stride(1), mask.stride(2),
-        sm_scale=sm_scale, neg_inf=MASK_FILL, N=n, H=h, DIM=dim,
-        BLOCK_J=64, BLOCK_K=32, num_warps=4, num_stages=3,
-    )
+    if USE_FAST_PATH:
+        wrap_triton(_fwd_finalize)[(n, bh)](
+            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
+            mask, mask.stride(0), mask.stride(1), mask.stride(2),
+            sm_scale=sm_scale, neg_inf=MASK_FILL, N=n, H=h, DIM=dim,
+            BLOCK_J=64, BLOCK_K=32, num_warps=4, num_stages=3,
+            USE_FAST_PATH=USE_FAST_PATH,
+        )
 
 
     o = rearrange(o, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
@@ -125,7 +133,11 @@ def triangle_attention_bwd(
     k = rearrange(k, "b h ... -> (b h) ...")
     v = rearrange(v, "b h ... -> (b h) ...")
     b = rearrange(b, "b h ... -> (b h) ...")
-    kernel_b = (b * 1.4426950408889634).to(q.dtype) if q.dtype == torch.bfloat16 else b
+    kernel_b = (
+        (b * 1.4426950408889634).to(q.dtype)
+        if USE_FAST_PATH and q.dtype == torch.bfloat16
+        else b
+    )
     o = rearrange(o, "b h ... -> (b h) ...")
     mx = rearrange(mx, "b h ... -> (b h) ...")
     dn = rearrange(dn, "b h ... -> (b h) ...")
@@ -168,6 +180,7 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 
@@ -191,6 +204,7 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 
@@ -216,6 +230,7 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 

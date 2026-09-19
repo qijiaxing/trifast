@@ -15,11 +15,17 @@ from trifast.autotune_helpers import (
 # both receive that same rounded tensor. Scaling q or k instead would round before the dot
 # and change the computed attention scores.
 #
-# The BF16 forward uses zero as a fixed softmax offset. This removes the block-max,
-# accumulator-rescaling, and running-max work from every K tile. The result is identical
-# whenever the exponentials and denominator are finite. `_fwd_finalize` checks those
-# denominators and reruns only exceptional tiles with the stable online recurrence. It
-# also handles fully-masked rows, whose finite-sentinel semantics produce mean(V).
+# The BF16 forward uses zero as a fixed softmax offset.
+# This removes the
+#  - block-max,
+#  - accumulator-rescaling,
+#  - running-max work
+# from every K tile.
+# The result is identical whenever the exponentials and denominator are finite.
+# `_fwd_finalize` checks those denominators and reruns only exceptional tiles
+# with the stable online recurrence.
+# It also handles fully-masked rows,
+# whose finite-sentinel semantics produce mean(V).
 #
 # The mask is a torch bool tensor, which loads as uint8, so every `m_block` load ends in
 # `!= 0`. Triton deprecates a non-boolean tl.where condition and will reject it in a future
@@ -45,9 +51,13 @@ def _fwd(
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
     sm_scale,
     neg_inf,
-    N, H, DIM: tl.constexpr,
+    N,   # N is varing during training
+    H,   # (TODO) Heads is constant
+    DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
-    BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
+    BLOCK_J: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -56,6 +66,7 @@ def _fwd(
     pid_h = tl.program_id(2)  # Parallelize along h
 
     inv_ln2: tl.constexpr = 1.4426950408889634 # = 1.0 / ln(2)
+    ln2: tl.constexpr = 0.6931471824645996 # = ln(2)
 
     # The sentinel in the same log2 units as the scores it replaces. Spelled identically
     # in all four kernels, so every one of them substitutes the same bits.
@@ -87,6 +98,7 @@ def _fwd(
     v_ptrs = base_v_ptr + (k_idxs[:, None] * stride_vn) + (d_idxs[None, :] * stride_vd) # [k,d]
 
     l_off = (start_h * stride_lh) + (start_i * stride_lm) + (j_idxs * stride_ln) # [j]
+    lse_ptrs = lse_ptr + l_off
     mx_ptrs = mx_ptr + l_off
     dn_ptrs = dn_ptr + l_off
 
@@ -96,7 +108,7 @@ def _fwd(
     base_o_ptr = o_ptr + (start_h * stride_oh) + (start_i * stride_om)
     o_ptrs = base_o_ptr + (j_idxs[:, None] * stride_on) + (d_idxs[None, :] * stride_od) # [j,d]
 
-    if input_dtype == tl.bfloat16:
+    if USE_FAST_PATH:
         scores_max = tl.zeros([BLOCK_J], dtype=tl.float32)
     else:
         scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32)
@@ -116,10 +128,12 @@ def _fwd(
         b_block = tl.load(b_ptrs,  in_range).to(tl.float32)  # [j,k]
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
+        # P = Q @ K
         scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
-        if input_dtype == tl.bfloat16:
-            # BF16 fast path: the caller converts bias to base-two units once. The
-            # benchmark distribution is safely representable without online rescaling.
+        if USE_FAST_PATH:
+            # BF16 fast path:
+            #   - the caller converts bias to base-two units once. The
+            #   - Use zero as fixed softmax offset.
             scores = scores * (sm_scale * inv_ln2) + b_block
             exp_scores = tl.math.exp2(scores)
             exp_scores = tl.where(in_range & ~m_block[None, :], exp_scores, 0.0)
@@ -132,13 +146,17 @@ def _fwd(
             block_max = tl.maximum(scores_max, tl.max(scores, 1))
             exp_scores = tl.math.exp2(scores - block_max[:, None])
             exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
+            # (TODO) no need to update acc if scores_max == block_max
             exp_scale = tl.math.exp2(scores_max - block_max)
             sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, 1)
             acc = acc * exp_scale[:, None]
             scores_max = block_max
+        # Load V
         v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
+        # P fp32 -> bf16
         exp_scores = exp_scores.to(input_dtype)  # [j,k]
 
+        # O = P @ V
         acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
 
         # Advance to next block along the k dimension.
@@ -154,11 +172,13 @@ def _fwd(
 
     # Backward reconstructs probabilities as exp2(scores - mx) / dn. The BF16 fast
     # path uses zero as mx; the stable path uses its running maximum.
-    if input_dtype != tl.bfloat16:
+    if not USE_FAST_PATH:
         tl.store(mx_ptrs, scores_max, mask=mask_j)
+        lse = (scores_max + tl.math.log2(sm_denom)) * ln2
+        tl.store(lse_ptrs, lse, mask=mask_j)
     tl.store(dn_ptrs, sm_denom, mask=mask_j)
 
-    # LSE is materialized by the lightweight post-processing kernel.
+    # The fast path materializes LSE in the post-processing kernel.
 # fmt: on
 
 
@@ -205,6 +225,7 @@ def _fwd_finalize(
     DIM: tl.constexpr,
     BLOCK_J: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    USE_FAST_PATH: tl.constexpr = False,
 ):
     """Materialize LSE and stably recompute rows outside the BF16 fast path's range."""
     pid_i = tl.program_id(0)
@@ -230,7 +251,7 @@ def _fwd_finalize(
             (row_denom == 0.0) | (row_denom == float("inf")) | (row_denom != row_denom)
         )
 
-        if input_dtype == tl.bfloat16 and tl.sum(invalid.to(tl.int32), axis=0) != 0:
+        if USE_FAST_PATH and tl.sum(invalid.to(tl.int32), axis=0) != 0:
             q_ptrs = (
                 q_ptr
                 + pid_h * stride_qh
@@ -330,6 +351,7 @@ def _bwd_kv(
     N, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
+    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -408,7 +430,7 @@ def _bwd_kv(
         b_block = tl.load(b_ptrs, in_range).to(tl.float32) # [j,k]
 
         scores = tl.dot(q_block, kt_block, input_precision="ieee") # [j,k]
-        if input_dtype == tl.bfloat16:
+        if USE_FAST_PATH:
             scores = scores * (sm_scale * inv_ln2) + b_block
         else:
             scores = (scores * sm_scale + b_block) * inv_ln2
@@ -480,6 +502,7 @@ def _bwd_q(
     N, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr,  BLOCK_K: tl.constexpr,
+    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -563,7 +586,7 @@ def _bwd_q(
         k_block = tl.load(k_ptrs, mask_k[:, None]) # [k,d]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        if input_dtype == tl.bfloat16:
+        if USE_FAST_PATH:
             scores = scores * (sm_scale * inv_ln2) + b_block
         else:
             scores = (scores * sm_scale + b_block) * inv_ln2
@@ -618,6 +641,7 @@ def _bwd_b(
     H, N, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
+    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
     BLOCK_I: tl.constexpr = 1
@@ -689,7 +713,7 @@ def _bwd_b(
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        if input_dtype == tl.bfloat16:
+        if USE_FAST_PATH:
             scores = scores * (sm_scale * inv_ln2) + b_block
         else:
             scores = (scores * sm_scale + b_block) * inv_ln2
