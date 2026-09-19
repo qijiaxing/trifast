@@ -15,6 +15,7 @@ The forward kernel is tuned for the crop-size-varying training workload:
 
 - `N` is a runtime value, while `CLOSEST_N` remains a compile-time bucket, avoiding a separate kernel variant for every crop size.
 - The Hopper configuration uses `BLOCK_J=64`, `BLOCK_K=32`, four warps, three pipeline stages, and an 80-register cap for head dimensions up to 64.
+- Aligned bias tiles use a padded 2D Hopper TMA descriptor, reducing compiler-generated shared-memory bank conflicts; traced/fake tensor execution falls back to pointer loads.
 - With the BF16 fixed-offset fast path disabled by default, the stable online-softmax path computes LSE directly in `_fwd` and skips the separate `_fwd_finalize` launch.
 - The optional BF16 fixed-offset path is still available through `USE_FAST_PATH`, but the results below use `USE_FAST_PATH=False`.
 
@@ -27,10 +28,10 @@ TriFast individual-kernel throughput — BF16 (TFLOP/s)
 ┌──────┬─────────┬────────────┬──────────────┬───────────────┐
 │  N   │ Forward │ Backward Q │ Backward K/V │ Backward Bias │
 ├──────┼─────────┼────────────┼──────────────┼───────────────┤
-│  512 │   78.41 │      94.16 │        68.46 │         67.38 │
-│  640 │   80.03 │      95.84 │        70.02 │         70.13 │
-│  768 │   81.25 │      97.10 │        70.50 │         71.58 │
-│  800 │   78.38 │      93.59 │        65.34 │         68.47 │
-│ 1024 │   82.73 │      98.36 │        71.92 │         72.86 │
+│  512 │   79.46 │      94.16 │        68.46 │         67.38 │
+│  640 │   81.08 │      95.84 │        70.02 │         70.13 │
+│  768 │   82.29 │      97.10 │        70.50 │         71.58 │
+│  800 │   79.38 │      93.59 │        65.34 │         68.47 │
+│ 1024 │   83.64 │      98.36 │        71.92 │         72.86 │
 └──────┴─────────┴────────────┴──────────────┴───────────────┘
 ```

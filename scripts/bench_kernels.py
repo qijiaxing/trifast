@@ -14,9 +14,10 @@ from typing import Callable
 import torch
 import triton
 import triton.testing
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
-from trifast.torch import MASK_FILL, USE_FAST_PATH
+from trifast.torch import MASK_FILL, USE_FAST_PATH, USE_TMA_BIAS
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
@@ -115,6 +116,16 @@ def _make_launchers(
     dk = torch.empty_like(k)
     dv = torch.empty_like(v)
     db = torch.empty_like(bias)
+    use_tma_bias = USE_TMA_BIAS and d <= 64
+    if use_tma_bias:
+        bias_alignment = 16 // bias.element_size()
+        padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
+        padded_bias = torch.nn.functional.pad(bias, (0, padded_n - n))
+        desc_b = TensorDescriptor.from_tensor(
+            padded_bias.reshape(bh * n, padded_n), block_shape=[64, 32]
+        )
+    else:
+        desc_b = bias
 
     def fwd_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)
@@ -169,6 +180,7 @@ def _make_launchers(
             mask.stride(0),
             mask.stride(1),
             mask.stride(2),
+            desc_b,
             sm_scale=sm_scale,
             neg_inf=MASK_FILL,
             N=n,
@@ -176,6 +188,7 @@ def _make_launchers(
             DIM=d,
             CLOSEST_N=closest_n,
             USE_FAST_PATH=USE_FAST_PATH,
+            USE_TMA_BIAS=use_tma_bias,
         )
 
     def run_bwd_q() -> None:

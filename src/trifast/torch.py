@@ -5,6 +5,7 @@ from jaxtyping import Bool, Float
 from einops import rearrange
 from torch.library import wrap_triton, triton_op
 import triton.testing
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.triton import (
     _fwd,
@@ -27,6 +28,7 @@ from trifast.triton import (
 # Lives in fp32 score space, so one value serves every input dtype.
 MASK_FILL = -1e4
 USE_FAST_PATH = False
+USE_TMA_BIAS = True
 
 
 @triton_op("trifast::triangle_attention", mutates_args={})
@@ -61,6 +63,24 @@ def _triangle_attention(
 
     # e.g. batch x head
     bh = q.shape[0]
+    can_use_tma_bias = (
+        USE_TMA_BIAS
+        and dim <= 64
+        and type(fwd_b).__name__
+        not in {
+            "FakeTensor",
+            "FunctionalTensor",
+        }
+    )
+    if can_use_tma_bias:
+        bias_alignment = 16 // fwd_b.element_size()
+        padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
+        padded_b = torch.nn.functional.pad(fwd_b, (0, padded_n - n))
+        desc_b = TensorDescriptor.from_tensor(
+            padded_b.reshape(bh * n, padded_n), block_shape=[64, 32]
+        )
+    else:
+        desc_b = fwd_b
 
     def grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
@@ -82,10 +102,12 @@ def _triangle_attention(
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
+        desc_b,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
         USE_FAST_PATH=USE_FAST_PATH,
+        USE_TMA_BIAS=can_use_tma_bias,
     )
 
     if USE_FAST_PATH:

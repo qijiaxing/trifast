@@ -49,6 +49,7 @@ def _fwd(
     v_ptr, stride_vh, stride_vm, stride_vn, stride_vd,
     b_ptr, stride_bh, stride_bm, stride_bn,
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
+    desc_b,
     sm_scale,
     neg_inf,
     N,   # N is varing during training
@@ -58,6 +59,7 @@ def _fwd(
     BLOCK_J: tl.constexpr,
     BLOCK_K: tl.constexpr,
     USE_FAST_PATH: tl.constexpr = False,
+    USE_TMA_BIAS: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -125,7 +127,10 @@ def _fwd(
         in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
 
         kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
-        b_block = tl.load(b_ptrs,  in_range).to(tl.float32)  # [j,k]
+        if USE_TMA_BIAS:
+            b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
+        else:
+            b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
         # P = Q @ K
