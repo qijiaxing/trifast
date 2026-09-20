@@ -1,6 +1,7 @@
 import os
 import torch
 import triton
+from triton.tools.tensor_descriptor import TensorDescriptor
 from pathlib import Path
 import platformdirs
 from importlib.metadata import version
@@ -57,6 +58,15 @@ def dict_to_config(d: dict) -> triton.Config:
     )
 
 
+def _fwd_descriptor_pre_hook(nargs):
+    """Match the host TMA bias tile to the selected forward configuration."""
+    desc_b = nargs.get("desc_b")
+    if isinstance(desc_b, TensorDescriptor):
+        block_shape = [nargs["BLOCK_J"], nargs["BLOCK_K"]]
+        if desc_b.block_shape != block_shape:
+            desc_b.block_shape = block_shape
+
+
 # Base configs targeting H20
 _fwd_configs = [
     triton.Config(
@@ -69,9 +79,9 @@ _fwd_configs = [
 
 
 def prune_fwd_configs(configs, named_args, **kwargs):
-    """Use the H20 register cap for small heads; it cannot compile DIM=128."""
+    """The H20 register cap cannot compile DIM=128."""
     if kwargs["DIM"] <= 64:
-        return [configs[0]]
+        return configs
     return [config for config in configs if config.maxnreg is None]
 
 
@@ -99,6 +109,23 @@ if FORCE_TUNE:
             triton.Config({"BLOCK_J": 32, "BLOCK_K": 128}, num_warps=4, num_stages=2),
         ]
     )
+
+for config in _fwd_configs:
+    config.pre_hook = _fwd_descriptor_pre_hook
+
+# torch.compile currently rejects autotuners carrying config hooks. This hook-free
+# clone shares the same kernel body and is used by traced/fake-tensor execution.
+_fwd_pointer_configs = [
+    triton.Config(
+        kwargs=dict(config.kwargs),
+        num_warps=config.num_warps,
+        num_stages=config.num_stages,
+        num_ctas=config.num_ctas,
+        maxnreg=config.maxnreg,
+    )
+    for config in _fwd_configs
+]
+
 
 _bwd_q_configs = [
     triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),

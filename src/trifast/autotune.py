@@ -77,9 +77,21 @@ class Autotuner(triton.runtime.Autotuner):
             if self.cache_file.exists():
                 try:
                     with FILE_LOCK, open(self.cache_file, "rb") as f:
-                        self.cache = {
-                            k: dict_to_config(v) for k, v in json.load(f).items()
-                        }
+                        saved_cache = json.load(f)
+                    self.cache = {}
+                    for cache_key, saved_config in saved_cache.items():
+                        loaded_config = dict_to_config(saved_config)
+                        # Reuse the live Config object when possible so non-serializable
+                        # hooks, such as the forward descriptor pre-hook, are preserved.
+                        self.cache[cache_key] = next(
+                            (
+                                config
+                                for config in self.configs
+                                if config_to_dict(config)
+                                == config_to_dict(loaded_config)
+                            ),
+                            loaded_config,
+                        )
                 except Exception as e:
                     # If there's some corruption or incompatibility, ignore and start fresh
                     print(

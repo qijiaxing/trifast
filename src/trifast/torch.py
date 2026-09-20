@@ -9,6 +9,7 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.triton import (
     _fwd,
+    _fwd_pointer,
     _fwd_finalize,
     _bwd_kv,
     _bwd_q,
@@ -73,6 +74,7 @@ def _triangle_attention(
         }
     )
     if can_use_tma_bias:
+        # on hopper, tma requires 16 bytes alignment
         bias_alignment = 16 // fwd_b.element_size()
         padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
         padded_b = torch.nn.functional.pad(fwd_b, (0, padded_n - n))
@@ -93,8 +95,10 @@ def _triangle_attention(
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
 
+    fwd_kernel = _fwd if can_use_tma_bias else _fwd_pointer
+
     # fmt: off
-    wrap_triton(_fwd)[grid](
+    wrap_triton(fwd_kernel)[grid](
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
         lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),

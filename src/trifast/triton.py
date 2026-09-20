@@ -4,6 +4,7 @@ import triton.language as tl
 from trifast.autotune import autotune
 from trifast.autotune_helpers import (
     _fwd_configs,
+    _fwd_pointer_configs,
     prune_fwd_configs,
     _bwd_kv_configs,
     _bwd_q_configs,
@@ -128,6 +129,7 @@ def _fwd(
 
         kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
         if USE_TMA_BIAS:
+            # block shape [64, 32]
             b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
         else:
             b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
@@ -185,6 +187,13 @@ def _fwd(
 
     # The fast path materializes LSE in the post-processing kernel.
 # fmt: on
+
+
+_fwd_pointer = autotune(
+    configs=_fwd_pointer_configs,
+    key=["H", "DIM", "CLOSEST_N"],
+    prune_configs_by={"early_config_prune": prune_fwd_configs},
+)(_fwd.fn)
 
 
 @triton.jit
