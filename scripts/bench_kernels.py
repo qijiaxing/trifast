@@ -17,7 +17,7 @@ import triton.testing
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
-from trifast.torch import MASK_FILL, USE_TMA_BIAS
+from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
@@ -125,6 +125,16 @@ def _make_launchers(
     else:
         desc_b = bias
 
+    # Keep this in sync with trifast.torch._triangle_attention.
+    use_tma = USE_TMA and d * q.element_size() % 16 == 0
+    if use_tma:
+        desc_q = TensorDescriptor.from_tensor(q, block_shape=[1, 1, 64, 32])
+        desc_k = TensorDescriptor.from_tensor(k, block_shape=[1, 1, 64, 32])
+        desc_v = TensorDescriptor.from_tensor(v, block_shape=[1, 1, 64, 32])
+        desc_o = TensorDescriptor.from_tensor(o, block_shape=[1, 1, 64, 32])
+    else:
+        desc_q, desc_k, desc_v, desc_o = q, k, v, o
+
     def fwd_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)
 
@@ -179,12 +189,17 @@ def _make_launchers(
             mask.stride(1),
             mask.stride(2),
             desc_b,
+            desc_q,
+            desc_k,
+            desc_v,
+            desc_o,
             sm_scale=sm_scale,
             neg_inf=MASK_FILL,
             N=n,
             H=h,
             DIM=d,
             CLOSEST_N=closest_n,
+            USE_TMA=use_tma,
             USE_TMA_BIAS=use_tma_bias,
         )
 

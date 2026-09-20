@@ -44,6 +44,7 @@ class Autotuner(triton.runtime.Autotuner):
         warmup=None,
         rep=None,
         use_cuda_graph=False,
+        cache_name=None,
     ):
         """
         :param prune_configs_by: a dict of functions that are used to prune configs, fields:
@@ -70,8 +71,9 @@ class Autotuner(triton.runtime.Autotuner):
         if config_dir is not None:
             config_dir.mkdir(parents=True, exist_ok=True)
             # TODO: adjust this to also include the fn's hash?
+            cache_name = cache_name or fn.__name__
             self.cache_file = (
-                config_dir / f"{fn.__name__}_{device_name}_{device_capability}.json"
+                config_dir / f"{cache_name}_{device_name}_{device_capability}.json"
             )
             # Load any previously cached data
             if self.cache_file.exists():
@@ -180,6 +182,7 @@ def autotune(
     rep=None,
     use_cuda_graph=False,
     do_bench=None,
+    cache_name=None,
 ):
     """
     Decorator for auto-tuning a :code:`triton.jit`'d function.
@@ -234,6 +237,8 @@ def autotune(
     :type rep: int
     :param do_bench: a benchmark function to measure the time of each run.
     :type do_bench: lambda fn, quantiles
+    :param cache_name: optional persistent-cache namespace. Defaults to the kernel name.
+    :type cache_name: str
     """
 
     def decorator(fn):
@@ -250,6 +255,7 @@ def autotune(
             warmup=warmup,
             rep=rep,
             use_cuda_graph=use_cuda_graph,
+            cache_name=cache_name,
         )
 
     return decorator

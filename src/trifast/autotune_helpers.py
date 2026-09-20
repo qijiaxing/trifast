@@ -59,16 +59,35 @@ def dict_to_config(d: dict) -> triton.Config:
 
 
 def _fwd_descriptor_pre_hook(nargs):
-    """Match the host TMA bias tile to the selected forward configuration."""
-    desc_b = nargs.get("desc_b")
-    if isinstance(desc_b, TensorDescriptor):
-        block_shape = [nargs["BLOCK_J"], nargs["BLOCK_K"]]
-        if desc_b.block_shape != block_shape:
-            desc_b.block_shape = block_shape
+    """Match the host TMA tiles to the selected forward configuration.
+
+    Mutating ``block_shape`` changes the kernel's specialization key, so the
+    launch rebuilds the device tensormap with the matching box. The values
+    set here are placeholders; this hook rewrites them per config, both
+    during tuning (before each candidate's timed run) and on every launch.
+    """
+    block_j = nargs["BLOCK_J"]
+    block_k = nargs["BLOCK_K"]
+    dim = nargs["DIM"]
+    tiles = {
+        # [bh, n, n, dim] tensors: a box of rows (j or k) inside one (h, i)
+        # slice, so the hardware clips rows >= n instead of wrapping into
+        # the neighbouring slice.
+        "desc_q": [1, 1, block_j, dim],
+        "desc_k": [1, 1, block_k, dim],
+        "desc_v": [1, 1, block_k, dim],
+        "desc_o": [1, 1, block_j, dim],
+        # Bias is the padded [bh, n, padded_n] tensor reshaped 2D.
+        "desc_b": [block_j, block_k],
+    }
+    for name, block_shape in tiles.items():
+        desc = nargs.get(name)
+        if isinstance(desc, TensorDescriptor) and desc.block_shape != block_shape:
+            desc.block_shape = block_shape
 
 
-# Base configs targeting H20
-_fwd_configs = [
+# Base configs targeting H20 and shared by the TMA and pointer kernels.
+_fwd_common_configs = [
     triton.Config(
         kwargs={"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3, maxnreg=80
     ),
@@ -76,6 +95,18 @@ _fwd_configs = [
     triton.Config(kwargs={"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
     triton.Config(kwargs={"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=1),
 ]
+
+# TMA q/k/v/o pays a fixed per-iteration cost in barrier and multi-buffer
+# shared-memory addressing, which only amortizes over wider K tiles. Keep
+# these candidates out of the traced/fake-tensor pointer fallback.
+_fwd_tma_configs = [
+    triton.Config(kwargs={"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=2),
+    triton.Config(kwargs={"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=3),
+    triton.Config(kwargs={"BLOCK_J": 128, "BLOCK_K": 64}, num_warps=8, num_stages=2),
+    triton.Config(kwargs={"BLOCK_J": 64, "BLOCK_K": 128}, num_warps=4, num_stages=2),
+]
+
+_fwd_configs = [*_fwd_common_configs, *_fwd_tma_configs]
 
 
 def prune_fwd_configs(configs, named_args, **kwargs):
@@ -85,36 +116,37 @@ def prune_fwd_configs(configs, named_args, **kwargs):
     return [config for config in configs if config.maxnreg is None]
 
 
+_fwd_force_tune_configs = []
 if FORCE_TUNE:
-    _fwd_configs.extend(
-        [
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=1, num_stages=5),
-            triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=2),
-            triton.Config({"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=4, num_stages=2),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 64}, num_warps=4, num_stages=3),
-            triton.Config({"BLOCK_J": 64, "BLOCK_K": 16}, num_warps=2, num_stages=3),
-            triton.Config({"BLOCK_J": 128, "BLOCK_K": 16}, num_warps=2, num_stages=2),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=2, num_stages=4),
-            triton.Config({"BLOCK_J": 16, "BLOCK_K": 32}, num_warps=4, num_stages=2),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=4, num_stages=1),
-            triton.Config({"BLOCK_J": 16, "BLOCK_K": 64}, num_warps=4, num_stages=1),
-            triton.Config({"BLOCK_J": 128, "BLOCK_K": 16}, num_warps=4, num_stages=2),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=8, num_stages=1),
-            triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=8, num_stages=1),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=2, num_stages=5),
-            triton.Config({"BLOCK_J": 16, "BLOCK_K": 16}, num_warps=8, num_stages=1),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 64}, num_warps=8, num_stages=1),
-            triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=1),
-            triton.Config({"BLOCK_J": 16, "BLOCK_K": 32}, num_warps=8, num_stages=2),
-            triton.Config({"BLOCK_J": 32, "BLOCK_K": 128}, num_warps=4, num_stages=2),
-        ]
-    )
+    _fwd_force_tune_configs = [
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=1, num_stages=5),
+        triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 64}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_J": 64, "BLOCK_K": 16}, num_warps=2, num_stages=3),
+        triton.Config({"BLOCK_J": 128, "BLOCK_K": 16}, num_warps=2, num_stages=2),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=2, num_stages=4),
+        triton.Config({"BLOCK_J": 16, "BLOCK_K": 32}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_J": 16, "BLOCK_K": 64}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_J": 128, "BLOCK_K": 16}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=8, num_stages=1),
+        triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=8, num_stages=1),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 16}, num_warps=2, num_stages=5),
+        triton.Config({"BLOCK_J": 16, "BLOCK_K": 16}, num_warps=8, num_stages=1),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 64}, num_warps=8, num_stages=1),
+        triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_J": 16, "BLOCK_K": 32}, num_warps=8, num_stages=2),
+        triton.Config({"BLOCK_J": 32, "BLOCK_K": 128}, num_warps=4, num_stages=2),
+    ]
+    _fwd_configs.extend(_fwd_force_tune_configs)
 
 for config in _fwd_configs:
     config.pre_hook = _fwd_descriptor_pre_hook
 
 # torch.compile currently rejects autotuners carrying config hooks. This hook-free
 # clone shares the same kernel body and is used by traced/fake-tensor execution.
+# The exhaustive FORCE_TUNE set predates TMA and remains available to both paths.
 _fwd_pointer_configs = [
     triton.Config(
         kwargs=dict(config.kwargs),
@@ -123,7 +155,7 @@ _fwd_pointer_configs = [
         num_ctas=config.num_ctas,
         maxnreg=config.maxnreg,
     )
-    for config in _fwd_configs
+    for config in [*_fwd_common_configs, *_fwd_force_tune_configs]
 ]
 
 

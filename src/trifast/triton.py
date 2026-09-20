@@ -39,6 +39,7 @@ def _fwd(
     b_ptr, stride_bh, stride_bm, stride_bn,
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
     desc_b,
+    desc_q, desc_k, desc_v, desc_o,
     sm_scale,
     neg_inf,
     N,   # N is varing during training
@@ -47,9 +48,17 @@ def _fwd(
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    USE_TMA: tl.constexpr = False,
     USE_TMA_BIAS: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
+
+    # Eager launches type Python-float args as fp32, but torch.compile's triton
+    # integration binds them fp64, and an fp64 sentinel/scale promotes the
+    # whole score chain (and the accumulator) to fp64. Downcast once so both
+    # paths are numerically identical; in eager this is a no-op.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     pid_j = tl.program_id(0)  # Parallelize over chunks of j
     pid_i = tl.program_id(1)  # Parallelize along i
@@ -104,14 +113,26 @@ def _fwd(
 
     mask_j = j_idxs < N
 
-    q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
+    # The TMA path loads q/k/v through rank-4 descriptors over the natural
+    # [bh, n, n, dim] layout, one (h, i) slice per box row. Rows beyond n are
+    # clipped by the tensormap (zero-filled loads, no-op stores), so they
+    # never wrap into the neighbouring i slice the way a flat 2D view would.
+    # Clipped rows are the j >= N tail this kernel already treats as garbage:
+    # `in_range` kills their scores and every store is masked or clipped.
+    if USE_TMA:
+        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM)
+    else:
+        q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
 
     for start_k in tl.range(0, N, BLOCK_K):
         start_k = tl.multiple_of(start_k, BLOCK_K)
         mask_k = (k_idxs + start_k) < N
         in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
 
-        kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
+        if USE_TMA:
+            kt_block = desc_k.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM).T  # [d,k]
+        else:
+            kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
         if USE_TMA_BIAS:
             b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
         else:
@@ -134,7 +155,10 @@ def _fwd(
         acc = acc * exp_scale[:, None]
         scores_max = block_max
         # Load V
-        v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
+        if USE_TMA:
+            v_block = desc_v.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM)  # [k,d]
+        else:
+            v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
         # P fp32 -> bf16
         exp_scores = exp_scores.to(input_dtype)  # [j,k]
 
@@ -150,7 +174,13 @@ def _fwd(
 
     normalize = acc / sm_denom[:, None]
     final_output = normalize.to(input_dtype)
-    tl.store(o_ptrs, final_output, mask=mask_j[:, None])
+    if USE_TMA:
+        desc_o.store(
+            [start_h, start_i, start_j, 0],
+            final_output.reshape(1, 1, BLOCK_J, DIM),
+        )
+    else:
+        tl.store(o_ptrs, final_output, mask=mask_j[:, None])
 
     # Backward reconstructs probabilities as exp2(scores - mx) / dn.
     tl.store(mx_ptrs, scores_max, mask=mask_j)
@@ -164,6 +194,7 @@ _fwd_pointer = autotune(
     configs=_fwd_pointer_configs,
     key=["H", "DIM", "CLOSEST_N"],
     prune_configs_by={"early_config_prune": prune_fwd_configs},
+    cache_name="_fwd_pointer",
 )(_fwd.fn)
 
 
@@ -192,6 +223,11 @@ def _bwd_kv(
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
     input_dtype = q_ptr.dtype.element_ty
+
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     # program id
     pid_k = tl.program_id(0)
@@ -340,6 +376,11 @@ def _bwd_q(
 ):
     input_dtype = q_ptr.dtype.element_ty
 
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
+
     pid_j = tl.program_id(0)
     pid_i = tl.program_id(1)
     pid_h = tl.program_id(2)
@@ -475,6 +516,11 @@ def _bwd_b(
 ):
     input_dtype = q_ptr.dtype.element_ty
     BLOCK_I: tl.constexpr = 1
+
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     # program id
     pid_j = tl.program_id(0)
