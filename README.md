@@ -2,8 +2,10 @@
 
 This is TriFast fork, which is optimized for Hopper GPU.
 
+`src/trifast/triton.py`: the fwd and bwd kernels.
+`src/trifast/torch.py`: `triangle_attention` torch op.
+`src/trifast/autotune_helpers.py`: triton config autotune candidates.
 `python scripts/bench_kernels.py` can be used to run benchmark.
-`src/trifast/triton.py` contains the fwd and bwd kernels.
 
 ## Perf
 
@@ -14,7 +16,6 @@ H20 GPU, H = 8, D = 32.
 The forward kernel is tuned for the crop-size-varying training workload:
 
 - `N` is a runtime value, while `CLOSEST_N` remains a compile-time bucket, avoiding a separate kernel variant for every crop size.
-- The Hopper configuration uses `BLOCK_J=64`, `BLOCK_K=32`, four warps, three pipeline stages, and an 80-register cap for head dimensions up to 64.
 - Aligned bias tiles use a padded 2D Hopper TMA descriptor whose tile shape is updated by an autotune config pre-hook to match `BLOCK_J` and `BLOCK_K`; this reduces compiler-generated shared-memory bank conflicts, while traced/fake tensor execution falls back to pointer loads.
 - With the BF16 fixed-offset fast path disabled by default, the stable online-softmax path computes LSE directly in `_fwd` and skips the separate `_fwd_finalize` launch.
 - The optional BF16 fixed-offset path is still available through `USE_FAST_PATH`, but the results below use `USE_FAST_PATH=False`.
