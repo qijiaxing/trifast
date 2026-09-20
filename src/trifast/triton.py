@@ -4,46 +4,28 @@ import triton.language as tl
 from trifast.autotune import autotune
 from trifast.autotune_helpers import (
     _fwd_configs,
+    _fwd_pointer_configs,
+    prune_fwd_configs,
     _bwd_kv_configs,
     _bwd_q_configs,
     _bwd_b_configs,
 )
 
-# The four kernels below build `scores` with the exact same sequence of operations, so
-# that the softmax weights the backward recomputes match the ones the forward used bit
-# for bit. Two properties of that sequence are load-bearing:
+# Every kernel evaluates scores in base-two units.
 #
-#   sm_scale multiplies the fp32 dot result, not q or k. Scaling an operand rounds
-#   q*d^-0.5 to the input dtype's mantissa (8 bits in bf16) before the dot, and the
-#   forward and backward historically scaled *different* operands, so (q*s)k and q(k*s)
-#   disagreed and the gradient belonged to a slightly different function than the one
-#   the forward evaluated.
+# The sentinel is finite (MASK_FILL converted to log2 units below), so a fully-masked
+# row degenerates to uniform weights and produces mean(V) instead of NaNs.
 #
-#   The masking sentinel is converted to log2 units once, as a scalar, and inserted into
-#   the already-converted scores. It used to be inserted in natural units *after* the
-#   conversion, leaving a natural-unit value in a log2-unit tensor -- see _fwd's store of
-#   mx/dn for why that silently zeroed dv on fully-masked rows.
-#
-#   Inserting it in natural units *before* the conversion would fix the units too, and is
-#   the more obvious spelling, but it is measurably worse: `scores * inv_ln2 - block_max`
-#   gets contracted into a single FMA, so a masked lane's score is re-derived at the FMA's
-#   internal precision while block_max holds the rounded product. The two then differ by
-#   the rounding error of that multiply -- 2.1e-5 at sentinel -1e4 -- and a fully-masked
-#   row's weights come out as exp2(-2.1e-5) instead of exp2(0). Harmless in the end, since
-#   the factor cancels between the numerator and dn, but it means "score equals the row
-#   max" stops being exact and correctness starts depending on the compiler contracting
-#   identically in all four kernels. Converting the scalar once puts a plain select, with
-#   no product on its path, on the masked lanes.
-#
-# Unrelated, but it explains a repeated idiom: the mask is a torch bool tensor, which loads
-# as uint8, so every `m_block` load ends in `!= 0`. triton deprecates a non-boolean
-# tl.where condition and will error out on it in a future release.
+# The mask is a torch bool tensor, which loads as uint8, so every `m_block` load ends in
+# `!= 0`. Triton deprecates a non-boolean tl.where condition and will reject it in a future
+# release.
 
 
 # fmt: off
 @autotune(
     configs=_fwd_configs,
     key=["H", "DIM", "CLOSEST_N"],
+    prune_configs_by={"early_config_prune": prune_fwd_configs},
 )
 @triton.jit
 def _fwd(
@@ -56,13 +38,27 @@ def _fwd(
     v_ptr, stride_vh, stride_vm, stride_vn, stride_vd,
     b_ptr, stride_bh, stride_bm, stride_bn,
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
+    desc_b,
+    desc_q, desc_k, desc_v, desc_o,
     sm_scale,
     neg_inf,
-    N, H, DIM: tl.constexpr,
+    N,   # N is varing during training
+    H,   # (TODO) Heads is constant
+    DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
-    BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
+    BLOCK_J: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    USE_TMA: tl.constexpr = False,
+    USE_TMA_BIAS: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
+
+    # Eager launches type Python-float args as fp32, but torch.compile's triton
+    # integration binds them fp64, and an fp64 sentinel/scale promotes the
+    # whole score chain (and the accumulator) to fp64. Downcast once so both
+    # paths are numerically identical; in eager this is a no-op.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     pid_j = tl.program_id(0)  # Parallelize over chunks of j
     pid_i = tl.program_id(1)  # Parallelize along i
@@ -111,53 +107,63 @@ def _fwd(
     base_o_ptr = o_ptr + (start_h * stride_oh) + (start_i * stride_om)
     o_ptrs = base_o_ptr + (j_idxs[:, None] * stride_on) + (d_idxs[None, :] * stride_od) # [j,d]
 
-    scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32)
+    scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32) # [j]
     sm_denom = tl.full([BLOCK_J], value=0, dtype=tl.float32)
     acc = tl.full([BLOCK_J, DIM], value=0, dtype=tl.float32)
 
     mask_j = j_idxs < N
 
-    q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
+    # The TMA path loads q/k/v through rank-4 descriptors over the natural
+    # [bh, n, n, dim] layout, one (h, i) slice per box row. Rows beyond n are
+    # clipped by the tensormap (zero-filled loads, no-op stores), so they
+    # never wrap into the neighbouring i slice the way a flat 2D view would.
+    # Clipped rows are the j >= N tail this kernel already treats as garbage:
+    # `in_range` kills their scores and every store is masked or clipped.
+    if USE_TMA:
+        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM)
+    else:
+        q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
 
     for start_k in tl.range(0, N, BLOCK_K):
         start_k = tl.multiple_of(start_k, BLOCK_K)
         mask_k = (k_idxs + start_k) < N
         in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
 
-        kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
-        b_block = tl.load(b_ptrs,  in_range).to(tl.float32)  # [j,k]
+        if USE_TMA:
+            kt_block = desc_k.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM).T  # [d,k]
+        else:
+            kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
+        if USE_TMA_BIAS:
+            b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
+        else:
+            b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
+        # P = Q [BLOCK_J, D] @ K^T [D, BLOCK_K]
         scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
+        # Online Softmax
         scores = scores * sm_scale + b_block
         scores *= inv_ln2 # 1.0 / ln(2), [j,k]
-        # we want to make scores -inf at mask locations
-        scores = tl.where(m_block[None, :], neg_inf2, scores)  # [j,k]
+        scores = tl.where(m_block[None, :], neg_inf2, scores)
         scores = tl.where(in_range, scores, neg_inf2)
-
-        # Iterative softmax
-        block_max = tl.maximum(scores_max, tl.max(scores, 1))  # [j]
-        exp_scores = tl.math.exp2(scores - block_max[:, None])  # [j,k]
-        # Padding lanes of the last k block must not reach sm_denom. While a row has at
-        # least one valid key they leave on their own -- the sentinel underflows to 0 --
-        # but on a fully-masked row every lane holds the sentinel and so equals
-        # block_max, making each padding lane contribute exp2(0)=1. That would set
-        # sm_denom to cdiv(N,BLOCK_K)*BLOCK_K rather than N, and the forward would
-        # return sum(v)/padded_N instead of mean(v). Invisible whenever N is a multiple
-        # of BLOCK_K, wrong at N=100/130/200.
+        block_max = tl.maximum(scores_max, tl.max(scores, axis=1)) # [j]
+        exp_scores = tl.math.exp2(scores - block_max[:, None])     # [j,k]
         exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
-
-        exp_scale = tl.math.exp2(scores_max - block_max)  # [j]
-
-        sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, 1)  # [j]
-
-        acc = acc * exp_scale[:, None]  # [j,d]
-        v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
+        # (TODO) no need to update acc if scores_max == block_max
+        exp_scale = tl.math.exp2(scores_max - block_max)
+        sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, axis=1)
+        acc = acc * exp_scale[:, None]
+        scores_max = block_max
+        # Load V
+        if USE_TMA:
+            v_block = desc_v.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM)  # [k,d]
+        else:
+            v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
+        # P fp32 -> bf16
         exp_scores = exp_scores.to(input_dtype)  # [j,k]
 
+        # O = P @ V
         acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
-
-        scores_max = block_max
 
         # Advance to next block along the k dimension.
         kt_ptrs += BLOCK_K * stride_kn
@@ -168,29 +174,28 @@ def _fwd(
 
     normalize = acc / sm_denom[:, None]
     final_output = normalize.to(input_dtype)
-    tl.store(o_ptrs, final_output, mask=mask_j[:, None])
+    if USE_TMA:
+        desc_o.store(
+            [start_h, start_i, start_j, 0],
+            final_output.reshape(1, 1, BLOCK_J, DIM),
+        )
+    else:
+        tl.store(o_ptrs, final_output, mask=mask_j[:, None])
 
-    # The backward recomputes each softmax weight as exp2(scores - mx) / dn. Storing the
-    # running max and the denominator separately, rather than the single fused
-    # lse = mx*ln2 + log(dn), is what makes that recomputation exact on a row where
-    # every key is masked.
-    #
-    # There mx *is* the sentinel, and mx + log(dn) cannot hold both magnitudes in fp32:
-    # at the old sentinel of finfo(fp32).min the log(dn) term rounds away entirely, and
-    # even at a moderate -1e4 it survives to only ~4 significant digits. The backward
-    # then recovers a weight of 1 instead of 1/N (or, as shipped, 0 -- the sentinel was
-    # inserted after the log2 conversion, so this line's `* ln2` scaled it by 0.693 and
-    # exp2 underflowed). mx and dn each carry one magnitude, so nothing cancels:
-    # scores - mx is exactly 0 on such a row and dn is exactly N.
+    # Backward reconstructs probabilities as exp2(scores - mx) / dn.
     tl.store(mx_ptrs, scores_max, mask=mask_j)
-    tl.store(dn_ptrs, sm_denom, mask=mask_j)
-
-    # Natural-log logsumexp, for callers and diagnostics. Nothing reads it back; it is
-    # the pair above that the backward consumes.
-    lse = (scores_max * ln2) + tl.log(sm_denom)
-
+    lse = (scores_max + tl.math.log2(sm_denom)) * ln2
     tl.store(lse_ptrs, lse, mask=mask_j)
+    tl.store(dn_ptrs, sm_denom, mask=mask_j)
 # fmt: on
+
+
+_fwd_pointer = autotune(
+    configs=_fwd_pointer_configs,
+    key=["H", "DIM", "CLOSEST_N"],
+    prune_configs_by={"early_config_prune": prune_fwd_configs},
+    cache_name="_fwd_pointer",
+)(_fwd.fn)
 
 
 # fmt: off
@@ -218,6 +223,11 @@ def _bwd_kv(
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
     input_dtype = q_ptr.dtype.element_ty
+
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     # program id
     pid_k = tl.program_id(0)
@@ -294,8 +304,7 @@ def _bwd_kv(
         b_block = tl.load(b_ptrs, in_range).to(tl.float32) # [j,k]
 
         scores = tl.dot(q_block, kt_block, input_precision="ieee") # [j,k]
-        scores = scores * sm_scale + b_block
-        scores *= inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)
         scores = tl.where(in_range, scores, neg_inf2)
 
@@ -366,6 +375,11 @@ def _bwd_q(
     BLOCK_J: tl.constexpr,  BLOCK_K: tl.constexpr,
 ):
     input_dtype = q_ptr.dtype.element_ty
+
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     pid_j = tl.program_id(0)
     pid_i = tl.program_id(1)
@@ -447,8 +461,7 @@ def _bwd_q(
         k_block = tl.load(k_ptrs, mask_k[:, None]) # [k,d]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        scores = scores * sm_scale + b_block
-        scores *= inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)  # [j,k]
         scores = tl.where(in_range, scores, neg_inf2)
 
@@ -503,6 +516,11 @@ def _bwd_b(
 ):
     input_dtype = q_ptr.dtype.element_ty
     BLOCK_I: tl.constexpr = 1
+
+    # See _fwd: keep scalar args fp32 even when compiled launches bind them
+    # fp64.
+    sm_scale = sm_scale.to(tl.float32)
+    neg_inf = neg_inf.to(tl.float32)
 
     # program id
     pid_j = tl.program_id(0)
@@ -571,8 +589,7 @@ def _bwd_b(
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        scores = scores * sm_scale + b_block
-        scores *= inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)
         scores = tl.where(in_range, scores, neg_inf2)
 

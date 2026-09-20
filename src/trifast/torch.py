@@ -5,9 +5,11 @@ from jaxtyping import Bool, Float
 from einops import rearrange
 from torch.library import wrap_triton, triton_op
 import triton.testing
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.triton import (
     _fwd,
+    _fwd_pointer,
     _bwd_kv,
     _bwd_q,
     _bwd_b,
@@ -18,15 +20,15 @@ from trifast.triton import (
 # convert scores to log2 units, and finfo(fp32).min * 1.4427 overflows fp32 to -inf.
 #
 # Unlike flex's identically-valued MASK_FILL (see flex/flex.py), nothing here depends on
-# the magnitude being *large* either -- the forward stores the row max and the softmax
-# denominator separately, so a fully-masked row never needs SENTINEL + log(N) to stay
-# distinguishable from SENTINEL. The one requirement is that a masked key sitting next
-# to valid ones gets exactly zero weight, i.e. exp2((SENTINEL - max_score) * inv_ln2)
-# underflows; -1e4 leaves a huge margin, holding for score magnitudes up to ~1e3. Chosen
-# to match flex so the two backends' lse are directly comparable.
+# the magnitude being *large* either -- the stable fallback stores its normalization
+# offset and denominator separately, so a fully-masked row never needs SENTINEL + log(N)
+# to stay distinguishable from SENTINEL. The one requirement is that a masked key next
+# to valid ones gets exactly zero weight. -1e4 leaves a large margin and matches flex.
 #
 # Lives in fp32 score space, so one value serves every input dtype.
 MASK_FILL = -1e4
+USE_TMA = True
+USE_TMA_BIAS = True
 
 
 @triton_op("trifast::triangle_attention", mutates_args={})
@@ -40,9 +42,8 @@ def _triangle_attention(
     """Returns (o, lse, mx, dn).
 
     `lse` is the natural-log logsumexp, the same convention flex and protenix return,
-    and is for callers and diagnostics only. The backward consumes `mx` (the softmax row
-    max, in log2 units) and `dn` (the softmax denominator) instead -- see _fwd for why
-    the unfused pair is what makes a fully-masked row's gradient exact.
+    and is for callers and diagnostics only. The backward consumes `mx` (the base-two
+    normalization offset) and `dn` (the corresponding denominator) instead.
     """
     sm_scale = q.shape[-1] ** -0.5
 
@@ -57,11 +58,50 @@ def _triangle_attention(
 
     # e.g. batch x head
     bh = q.shape[0]
+    # Traced/fake tensor execution (torch.compile, opcheck) cannot build
+    # tensormaps, so it falls back to the pointer kernel.
+    _is_fake = lambda t: type(t).__name__ in {"FakeTensor", "FunctionalTensor"}
+    # TMA needs 16-byte-aligned global strides; a contiguous [*, dim] inner
+    # layout gives dim * element_size bytes per row.
+    can_use_tma = (
+        USE_TMA
+        and dim * q.element_size() % 16 == 0
+        and not _is_fake(q)
+    )
+    can_use_tma_bias = (
+        USE_TMA_BIAS
+        and dim <= 64
+        and not _is_fake(b)
+    )
+    if can_use_tma_bias:
+        # on hopper, tma requires 16 bytes alignment
+        bias_alignment = 16 // b.element_size()
+        padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
+        padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
+        # The block_shape is a placeholder; _fwd_descriptor_pre_hook rewrites it
+        # to [BLOCK_J, BLOCK_K] of the selected autotune config.
+        desc_b = TensorDescriptor.from_tensor(
+            padded_b.reshape(bh * n, padded_n), block_shape=[64, 32]
+        )
+    else:
+        desc_b = b
+
+    o = torch.zeros_like(q)
+    if can_use_tma:
+        # Rank-4 descriptors over the natural [bh, n, n, dim] layout. Boxes are
+        # [1, 1, BLOCK_*, DIM]; the placeholder block_shape is rewritten by the
+        # config pre-hook. The rank-4 box keeps each tile inside one (h, i)
+        # slice, so rows >= n clip instead of wrapping into the next slice.
+        desc_q = TensorDescriptor.from_tensor(q, block_shape=[1, 1, 64, 32])
+        desc_k = TensorDescriptor.from_tensor(k, block_shape=[1, 1, 64, 32])
+        desc_v = TensorDescriptor.from_tensor(v, block_shape=[1, 1, 64, 32])
+        desc_o = TensorDescriptor.from_tensor(o, block_shape=[1, 1, 64, 32])
+    else:
+        desc_q, desc_k, desc_v, desc_o = q, k, v, o
 
     def grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
 
-    o = torch.zeros_like(q)
     # _fwd takes a single set of strides for these three, so keep them identical.
     lse = torch.zeros((bh, n, n), device=q.device, dtype=torch.float32)
     mx = torch.zeros_like(lse)
@@ -69,8 +109,10 @@ def _triangle_attention(
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
 
+    fwd_kernel = _fwd if (can_use_tma or can_use_tma_bias) else _fwd_pointer
+
     # fmt: off
-    wrap_triton(_fwd)[grid](
+    wrap_triton(fwd_kernel)[grid](
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
         lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -78,11 +120,14 @@ def _triangle_attention(
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         b, b.stride(0), b.stride(1), b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
+        desc_b,
+        desc_q, desc_k, desc_v, desc_o,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
+        USE_TMA=can_use_tma,
+        USE_TMA_BIAS=can_use_tma_bias,
     )
-
 
     o = rearrange(o, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
     lse = rearrange(lse, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
@@ -215,9 +260,7 @@ def triangle_attention_bwd(
     return dq, dk, dv, db, dmask
 
 
-def backwards(
-    ctx, *grad: tuple[Float[torch.Tensor, "b h n n d"],]
-) -> tuple[
+def backwards(ctx, *grad: tuple[Float[torch.Tensor, "b h n n d"],]) -> tuple[
     Float[torch.Tensor, "b h n n d"],  # dq
     Float[torch.Tensor, "b h n n d"],  # dk
     Float[torch.Tensor, "b h n n d"],  # dv

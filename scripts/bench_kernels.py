@@ -14,12 +14,12 @@ from typing import Callable
 import torch
 import triton
 import triton.testing
+from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
-from trifast.torch import MASK_FILL
+from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
-
 
 N_VALUES = [512, 640, 768, 800, 1024]
 DTYPES = [torch.bfloat16]
@@ -41,10 +41,10 @@ KERNEL_STYLES = {
 # multiplication costs 2 * batch * h * n^3 * d FLOPs.  This is the standard
 # attention benchmark convention: pointwise softmax operations are not counted.
 MATMULS_PER_KERNEL = {
-    "fwd": 2,      # QK^T and PV
-    "bwd_q": 3,    # QK^T recomputation, dO V^T, and dS K
-    "bwd_kv": 4,   # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
-    "bwd_b": 2,    # QK^T recomputation and dO V^T
+    "fwd": 2,  # QK^T and PV
+    "bwd_q": 3,  # QK^T recomputation, dO V^T, and dS K
+    "bwd_kv": 4,  # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
+    "bwd_b": 2,  # QK^T recomputation and dO V^T
 }
 
 
@@ -105,7 +105,7 @@ def _make_launchers(
     o = torch.empty_like(q)
     # _fwd uses one set of strides for all three statistics tensors.
     lse = torch.empty((bh, n, n), device=q.device, dtype=torch.float32)
-    mx = torch.empty_like(lse)
+    mx = torch.zeros_like(lse)
     dn = torch.empty_like(lse)
 
     do = torch.randn_like(o)
@@ -114,6 +114,26 @@ def _make_launchers(
     dk = torch.empty_like(k)
     dv = torch.empty_like(v)
     db = torch.empty_like(bias)
+    use_tma_bias = USE_TMA_BIAS and d <= 64
+    if use_tma_bias:
+        bias_alignment = 16 // bias.element_size()
+        padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
+        padded_bias = torch.nn.functional.pad(bias, (0, padded_n - n))
+        desc_b = TensorDescriptor.from_tensor(
+            padded_bias.reshape(bh * n, padded_n), block_shape=[64, 32]
+        )
+    else:
+        desc_b = bias
+
+    # Keep this in sync with trifast.torch._triangle_attention.
+    use_tma = USE_TMA and d * q.element_size() % 16 == 0
+    if use_tma:
+        desc_q = TensorDescriptor.from_tensor(q, block_shape=[1, 1, 64, 32])
+        desc_k = TensorDescriptor.from_tensor(k, block_shape=[1, 1, 64, 32])
+        desc_v = TensorDescriptor.from_tensor(v, block_shape=[1, 1, 64, 32])
+        desc_o = TensorDescriptor.from_tensor(o, block_shape=[1, 1, 64, 32])
+    else:
+        desc_q, desc_k, desc_v, desc_o = q, k, v, o
 
     def fwd_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)
@@ -168,12 +188,19 @@ def _make_launchers(
             mask.stride(0),
             mask.stride(1),
             mask.stride(2),
+            desc_b,
+            desc_q,
+            desc_k,
+            desc_v,
+            desc_o,
             sm_scale=sm_scale,
             neg_inf=MASK_FILL,
             N=n,
             H=h,
             DIM=d,
             CLOSEST_N=closest_n,
+            USE_TMA=use_tma,
+            USE_TMA_BIAS=use_tma_bias,
         )
 
     def run_bwd_q() -> None:
@@ -405,8 +432,7 @@ def _print_table(
     def row(values: tuple[str, ...], centered: bool = False) -> str:
         alignment = "^" if centered else ">"
         cells = [
-            f" {value:{alignment}{width}} "
-            for value, width in zip(values, widths)
+            f" {value:{alignment}{width}} " for value, width in zip(values, widths)
         ]
         return "│" + "│".join(cells) + "│"
 

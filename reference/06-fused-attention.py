@@ -700,7 +700,7 @@ for HEAD_DIM in [32, ]:
                 configs.append(
                     triton.testing.Benchmark(
                         x_names=["N_CTX"],
-                        x_vals=[2**i for i in range(10, 13)],
+                        x_vals=[i for i in (512, 640, 768, 800, 1024)],
                         line_arg="provider",
                         line_vals=["triton-fp16"] + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
                         (["flash"] if HAS_FLASH else []),
