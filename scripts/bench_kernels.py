@@ -17,7 +17,7 @@ import triton.testing
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
-from trifast.torch import MASK_FILL, USE_FAST_PATH, USE_TMA_BIAS
+from trifast.torch import MASK_FILL, USE_TMA_BIAS
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
@@ -96,8 +96,6 @@ def _make_launchers(
     k = k.flatten(0, 1).contiguous()
     v = v.flatten(0, 1).contiguous()
     bias = bias.flatten(0, 1).contiguous()
-    if USE_FAST_PATH and dtype == torch.bfloat16:
-        bias = (bias * 1.4426950408889634).to(dtype)
     mask = mask.contiguous()
 
     bh = q.shape[0]
@@ -187,7 +185,6 @@ def _make_launchers(
             H=h,
             DIM=d,
             CLOSEST_N=closest_n,
-            USE_FAST_PATH=USE_FAST_PATH,
             USE_TMA_BIAS=use_tma_bias,
         )
 
@@ -247,7 +244,6 @@ def _make_launchers(
             N=n,
             DIM=d,
             CLOSEST_N=closest_n,
-            USE_FAST_PATH=USE_FAST_PATH,
         )
 
     def run_bwd_kv() -> None:
@@ -305,7 +301,6 @@ def _make_launchers(
             N=n,
             DIM=d,
             CLOSEST_N=closest_n,
-            USE_FAST_PATH=USE_FAST_PATH,
         )
 
     def run_bwd_b() -> None:
@@ -357,7 +352,6 @@ def _make_launchers(
             N=n,
             DIM=d,
             CLOSEST_N=closest_n,
-            USE_FAST_PATH=USE_FAST_PATH,
         )
 
     return {

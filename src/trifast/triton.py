@@ -11,22 +11,10 @@ from trifast.autotune_helpers import (
     _bwd_b_configs,
 )
 
-# Every kernel evaluates scores in base-two units. For BF16, torch.py converts the
-# comparatively small bias tensor once, outside the hot O(N^3) loop; forward and backward
-# both receive that same rounded tensor. Scaling q or k instead would round before the dot
-# and change the computed attention scores.
+# Every kernel evaluates scores in base-two units.
 #
-# The BF16 forward uses zero as a fixed softmax offset.
-# This removes the
-#  - block-max,
-#  - accumulator-rescaling,
-#  - running-max work
-# from every K tile.
-# The result is identical whenever the exponentials and denominator are finite.
-# `_fwd_finalize` checks those denominators and reruns only exceptional tiles
-# with the stable online recurrence.
-# It also handles fully-masked rows,
-# whose finite-sentinel semantics produce mean(V).
+# The sentinel is finite (MASK_FILL converted to log2 units below), so a fully-masked
+# row degenerates to uniform weights and produces mean(V) instead of NaNs.
 #
 # The mask is a torch bool tensor, which loads as uint8, so every `m_block` load ends in
 # `!= 0`. Triton deprecates a non-boolean tl.where condition and will reject it in a future
@@ -59,7 +47,6 @@ def _fwd(
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr,
     BLOCK_K: tl.constexpr,
-    USE_FAST_PATH: tl.constexpr = False,
     USE_TMA_BIAS: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
@@ -111,10 +98,7 @@ def _fwd(
     base_o_ptr = o_ptr + (start_h * stride_oh) + (start_i * stride_om)
     o_ptrs = base_o_ptr + (j_idxs[:, None] * stride_on) + (d_idxs[None, :] * stride_od) # [j,d]
 
-    if USE_FAST_PATH:
-        scores_max = tl.zeros([BLOCK_J], dtype=tl.float32)
-    else:
-        scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32)
+    scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32) # [j]
     sm_denom = tl.full([BLOCK_J], value=0, dtype=tl.float32)
     acc = tl.full([BLOCK_J, DIM], value=0, dtype=tl.float32)
 
@@ -129,35 +113,26 @@ def _fwd(
 
         kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
         if USE_TMA_BIAS:
-            # block shape [64, 32]
             b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
         else:
             b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
-        # P = Q @ K
+        # P = Q [BLOCK_J, D] @ K^T [D, BLOCK_K]
         scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
-        if USE_FAST_PATH:
-            # BF16 fast path:
-            #   - the caller converts bias to base-two units once. The
-            #   - Use zero as fixed softmax offset.
-            scores = scores * (sm_scale * inv_ln2) + b_block
-            exp_scores = tl.math.exp2(scores)
-            exp_scores = tl.where(in_range & ~m_block[None, :], exp_scores, 0.0)
-            sm_denom += tl.sum(exp_scores, 1)
-        else:
-            scores = scores * sm_scale + b_block
-            scores *= inv_ln2 # 1.0 / ln(2), [j,k]
-            scores = tl.where(m_block[None, :], neg_inf2, scores)
-            scores = tl.where(in_range, scores, neg_inf2)
-            block_max = tl.maximum(scores_max, tl.max(scores, 1))
-            exp_scores = tl.math.exp2(scores - block_max[:, None])
-            exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
-            # (TODO) no need to update acc if scores_max == block_max
-            exp_scale = tl.math.exp2(scores_max - block_max)
-            sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, 1)
-            acc = acc * exp_scale[:, None]
-            scores_max = block_max
+        # Online Softmax
+        scores = scores * sm_scale + b_block
+        scores *= inv_ln2 # 1.0 / ln(2), [j,k]
+        scores = tl.where(m_block[None, :], neg_inf2, scores)
+        scores = tl.where(in_range, scores, neg_inf2)
+        block_max = tl.maximum(scores_max, tl.max(scores, axis=1)) # [j]
+        exp_scores = tl.math.exp2(scores - block_max[:, None])     # [j,k]
+        exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
+        # (TODO) no need to update acc if scores_max == block_max
+        exp_scale = tl.math.exp2(scores_max - block_max)
+        sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, axis=1)
+        acc = acc * exp_scale[:, None]
+        scores_max = block_max
         # Load V
         v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
         # P fp32 -> bf16
@@ -177,15 +152,11 @@ def _fwd(
     final_output = normalize.to(input_dtype)
     tl.store(o_ptrs, final_output, mask=mask_j[:, None])
 
-    # Backward reconstructs probabilities as exp2(scores - mx) / dn. The BF16 fast
-    # path uses zero as mx; the stable path uses its running maximum.
-    if not USE_FAST_PATH:
-        tl.store(mx_ptrs, scores_max, mask=mask_j)
-        lse = (scores_max + tl.math.log2(sm_denom)) * ln2
-        tl.store(lse_ptrs, lse, mask=mask_j)
+    # Backward reconstructs probabilities as exp2(scores - mx) / dn.
+    tl.store(mx_ptrs, scores_max, mask=mask_j)
+    lse = (scores_max + tl.math.log2(sm_denom)) * ln2
+    tl.store(lse_ptrs, lse, mask=mask_j)
     tl.store(dn_ptrs, sm_denom, mask=mask_j)
-
-    # The fast path materializes LSE in the post-processing kernel.
 # fmt: on
 
 
@@ -194,152 +165,6 @@ _fwd_pointer = autotune(
     key=["H", "DIM", "CLOSEST_N"],
     prune_configs_by={"early_config_prune": prune_fwd_configs},
 )(_fwd.fn)
-
-
-@triton.jit
-def _fwd_finalize(
-    o_ptr,
-    stride_oh,
-    stride_om,
-    stride_on,
-    stride_od,
-    lse_ptr,
-    mx_ptr,
-    dn_ptr,
-    stride_lh,
-    stride_lm,
-    stride_ln,
-    q_ptr,
-    stride_qh,
-    stride_qm,
-    stride_qn,
-    stride_qd,
-    k_ptr,
-    stride_kh,
-    stride_km,
-    stride_kn,
-    stride_kd,
-    v_ptr,
-    stride_vh,
-    stride_vm,
-    stride_vn,
-    stride_vd,
-    b_ptr,
-    stride_bh,
-    stride_bm,
-    stride_bn,
-    mask_ptr,
-    stride_maskh,
-    stride_maskm,
-    stride_maskn,
-    sm_scale,
-    neg_inf,
-    N,
-    H,
-    DIM: tl.constexpr,
-    BLOCK_J: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-    USE_FAST_PATH: tl.constexpr = False,
-):
-    """Materialize LSE and stably recompute rows outside the BF16 fast path's range."""
-    pid_i = tl.program_id(0)
-    pid_h = tl.program_id(1)
-    batch = pid_h // H
-    input_dtype = q_ptr.dtype.element_ty
-    inv_ln2: tl.constexpr = 1.4426950408889634
-    ln2: tl.constexpr = 0.6931471824645996
-    neg_inf2 = neg_inf * inv_ln2
-
-    j_idxs = tl.arange(0, BLOCK_J)
-    k_idxs = tl.arange(0, BLOCK_K)
-    d_idxs = tl.arange(0, DIM)
-
-    for start_j in tl.range(0, N, BLOCK_J):
-        mask_j = start_j + j_idxs < N
-        stat_offset = (
-            pid_h * stride_lh + pid_i * stride_lm + (start_j + j_idxs) * stride_ln
-        )
-        row_max = tl.load(mx_ptr + stat_offset, mask=mask_j)
-        row_denom = tl.load(dn_ptr + stat_offset, mask=mask_j)
-        invalid = (
-            (row_denom == 0.0) | (row_denom == float("inf")) | (row_denom != row_denom)
-        )
-
-        if USE_FAST_PATH and tl.sum(invalid.to(tl.int32), axis=0) != 0:
-            q_ptrs = (
-                q_ptr
-                + pid_h * stride_qh
-                + pid_i * stride_qm
-                + (start_j + j_idxs[:, None]) * stride_qn
-                + d_idxs[None, :] * stride_qd
-            )
-            q = tl.load(q_ptrs, mask=mask_j[:, None])
-            fixed_max = tl.full([BLOCK_J], -float("inf"), tl.float32)
-            fixed_denom = tl.zeros([BLOCK_J], tl.float32)
-            fixed_acc = tl.zeros([BLOCK_J, DIM], tl.float32)
-
-            k_base = k_ptr + pid_h * stride_kh + pid_i * stride_km
-            v_base = v_ptr + pid_h * stride_vh + pid_i * stride_vm
-            b_base = b_ptr + pid_h * stride_bh
-            mask_base = mask_ptr + batch * stride_maskh + pid_i * stride_maskm
-            for start_k in tl.range(0, N, BLOCK_K):
-                mask_k = start_k + k_idxs < N
-                in_range = mask_j[:, None] & mask_k[None, :]
-                k = tl.load(
-                    k_base
-                    + d_idxs[:, None] * stride_kd
-                    + (start_k + k_idxs[None, :]) * stride_kn,
-                    mask=mask_k[None, :],
-                )
-                b = tl.load(
-                    b_base
-                    + (start_j + j_idxs[:, None]) * stride_bm
-                    + (start_k + k_idxs[None, :]) * stride_bn,
-                    mask=in_range,
-                ).to(tl.float32)
-                key_mask = (
-                    tl.load(mask_base + (start_k + k_idxs) * stride_maskn, mask=mask_k)
-                    != 0
-                )
-                scores = tl.dot(q, k, input_precision="ieee") * (sm_scale * inv_ln2) + b
-                scores = tl.where(key_mask[None, :], neg_inf2, scores)
-                scores = tl.where(in_range, scores, neg_inf2)
-                new_max = tl.maximum(fixed_max, tl.max(scores, axis=1))
-                p = tl.math.exp2(scores - new_max[:, None])
-                p = tl.where(mask_k[None, :], p, 0.0)
-                alpha = tl.math.exp2(fixed_max - new_max)
-                fixed_denom = fixed_denom * alpha + tl.sum(p, axis=1)
-                fixed_acc *= alpha[:, None]
-                v = tl.load(
-                    v_base
-                    + (start_k + k_idxs[:, None]) * stride_vn
-                    + d_idxs[None, :] * stride_vd,
-                    mask=mask_k[:, None],
-                )
-                fixed_acc = tl.dot(
-                    p.to(input_dtype), v, fixed_acc, input_precision="ieee"
-                )
-                fixed_max = new_max
-
-            o_ptrs = (
-                o_ptr
-                + pid_h * stride_oh
-                + pid_i * stride_om
-                + (start_j + j_idxs[:, None]) * stride_on
-                + d_idxs[None, :] * stride_od
-            )
-            tl.store(
-                o_ptrs,
-                (fixed_acc / fixed_denom[:, None]).to(input_dtype),
-                mask=mask_j[:, None] & invalid[:, None],
-            )
-            row_max = tl.where(invalid, fixed_max, row_max)
-            row_denom = tl.where(invalid, fixed_denom, row_denom)
-            tl.store(mx_ptr + stat_offset, row_max, mask=mask_j & invalid)
-            tl.store(dn_ptr + stat_offset, row_denom, mask=mask_j & invalid)
-
-        lse = (row_max + tl.math.log2(row_denom)) * ln2
-        tl.store(lse_ptr + stat_offset, lse, mask=mask_j)
 
 
 # fmt: off
@@ -365,7 +190,6 @@ def _bwd_kv(
     N, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
-    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -444,10 +268,7 @@ def _bwd_kv(
         b_block = tl.load(b_ptrs, in_range).to(tl.float32) # [j,k]
 
         scores = tl.dot(q_block, kt_block, input_precision="ieee") # [j,k]
-        if USE_FAST_PATH:
-            scores = scores * (sm_scale * inv_ln2) + b_block
-        else:
-            scores = (scores * sm_scale + b_block) * inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)
         scores = tl.where(in_range, scores, neg_inf2)
 
@@ -516,7 +337,6 @@ def _bwd_q(
     N, H, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr,  BLOCK_K: tl.constexpr,
-    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -600,10 +420,7 @@ def _bwd_q(
         k_block = tl.load(k_ptrs, mask_k[:, None]) # [k,d]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        if USE_FAST_PATH:
-            scores = scores * (sm_scale * inv_ln2) + b_block
-        else:
-            scores = (scores * sm_scale + b_block) * inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)  # [j,k]
         scores = tl.where(in_range, scores, neg_inf2)
 
@@ -655,7 +472,6 @@ def _bwd_b(
     H, N, DIM: tl.constexpr,
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
-    USE_FAST_PATH: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
     BLOCK_I: tl.constexpr = 1
@@ -727,10 +543,7 @@ def _bwd_b(
         m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
 
         scores = tl.dot(q_block, tl.trans(k_block), input_precision="ieee") # [j,k]
-        if USE_FAST_PATH:
-            scores = scores * (sm_scale * inv_ln2) + b_block
-        else:
-            scores = (scores * sm_scale + b_block) * inv_ln2
+        scores = (scores * sm_scale + b_block) * inv_ln2
         scores = tl.where(m_block[None, :], neg_inf2, scores)
         scores = tl.where(in_range, scores, neg_inf2)
 

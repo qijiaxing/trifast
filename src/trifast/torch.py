@@ -10,7 +10,6 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 from trifast.triton import (
     _fwd,
     _fwd_pointer,
-    _fwd_finalize,
     _bwd_kv,
     _bwd_q,
     _bwd_b,
@@ -28,7 +27,6 @@ from trifast.triton import (
 #
 # Lives in fp32 score space, so one value serves every input dtype.
 MASK_FILL = -1e4
-USE_FAST_PATH = False
 USE_TMA_BIAS = True
 
 
@@ -55,11 +53,6 @@ def _triangle_attention(
     k = rearrange(k, "b h ... -> (b h) ...").contiguous()
     v = rearrange(v, "b h ... -> (b h) ...").contiguous()
     b = rearrange(b, "b h ... -> (b h) ...").contiguous()
-    fwd_b = (
-        (b * 1.4426950408889634).to(q.dtype)
-        if USE_FAST_PATH and q.dtype == torch.bfloat16
-        else b
-    )
     mask = mask.contiguous()
 
     # e.g. batch x head
@@ -67,7 +60,7 @@ def _triangle_attention(
     can_use_tma_bias = (
         USE_TMA_BIAS
         and dim <= 64
-        and type(fwd_b).__name__
+        and type(b).__name__
         not in {
             "FakeTensor",
             "FunctionalTensor",
@@ -75,14 +68,14 @@ def _triangle_attention(
     )
     if can_use_tma_bias:
         # on hopper, tma requires 16 bytes alignment
-        bias_alignment = 16 // fwd_b.element_size()
+        bias_alignment = 16 // b.element_size()
         padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
-        padded_b = torch.nn.functional.pad(fwd_b, (0, padded_n - n))
+        padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
         desc_b = TensorDescriptor.from_tensor(
             padded_b.reshape(bh * n, padded_n), block_shape=[64, 32]
         )
     else:
-        desc_b = fwd_b
+        desc_b = b
 
     def grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
@@ -104,30 +97,14 @@ def _triangle_attention(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
+        b, b.stride(0), b.stride(1), b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         desc_b,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
-        USE_FAST_PATH=USE_FAST_PATH,
         USE_TMA_BIAS=can_use_tma_bias,
     )
-
-    if USE_FAST_PATH:
-        wrap_triton(_fwd_finalize)[(n, bh)](
-            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
-            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-            k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-            v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            fwd_b, fwd_b.stride(0), fwd_b.stride(1), fwd_b.stride(2),
-            mask, mask.stride(0), mask.stride(1), mask.stride(2),
-            sm_scale=sm_scale, neg_inf=MASK_FILL, N=n, H=h, DIM=dim,
-            BLOCK_J=64, BLOCK_K=32, num_warps=4, num_stages=3,
-            USE_FAST_PATH=USE_FAST_PATH,
-        )
-
 
     o = rearrange(o, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
     lse = rearrange(lse, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
@@ -159,11 +136,6 @@ def triangle_attention_bwd(
     k = rearrange(k, "b h ... -> (b h) ...")
     v = rearrange(v, "b h ... -> (b h) ...")
     b = rearrange(b, "b h ... -> (b h) ...")
-    kernel_b = (
-        (b * 1.4426950408889634).to(q.dtype)
-        if USE_FAST_PATH and q.dtype == torch.bfloat16
-        else b
-    )
     o = rearrange(o, "b h ... -> (b h) ...")
     mx = rearrange(mx, "b h ... -> (b h) ...")
     dn = rearrange(dn, "b h ... -> (b h) ...")
@@ -196,7 +168,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
+        b, b.stride(0), b.stride(1), b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
@@ -206,7 +178,6 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
-        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 
@@ -220,7 +191,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
+        b, b.stride(0), b.stride(1), b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
@@ -230,7 +201,6 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
-        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 
@@ -247,7 +217,7 @@ def triangle_attention_bwd(
         q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        kernel_b, kernel_b.stride(0), kernel_b.stride(1), kernel_b.stride(2),
+        b, b.stride(0), b.stride(1), b.stride(2),
         mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
@@ -256,7 +226,6 @@ def triangle_attention_bwd(
         neg_inf=MASK_FILL,
         H=h, N=n, DIM=dim,
         CLOSEST_N=CLOSEST_N,
-        USE_FAST_PATH=USE_FAST_PATH,
     )
     # fmt: on
 
