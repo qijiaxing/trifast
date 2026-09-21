@@ -52,3 +52,9 @@ dev-dependencies = [
     "ruff>=0.8.0",
     "seaborn>=0.13.2",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "compile: torch.compile fullgraph integration tests (GPU)",
+    "sanitizer: small CPU-FP64-reference cases suitable for compute-sanitizer",
+]

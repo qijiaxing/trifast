@@ -1,0 +1,2430 @@
+[
+  {
+    "run": "v4-benchmark-lowmemory-contiguous",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "full-workspace",
+          "candidate": "low-memory",
+          "chunk_i": 128,
+          "noncontiguous_do": false,
+          "modes": "forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "full-workspace",
+          "B": "low-memory"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.5889749192865565e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 2.029401730396785e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 843595776,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 642269184,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 6.180816173553467,
+          "B": 6.22051215171814
+        },
+        "speedup": 0.9936185353880053,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.689836244622711e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 8.805569450487383e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2062590976,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 1511040000,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 24.906672477722168,
+          "B": 25.150639533996582
+        },
+        "speedup": 0.9902997672904246,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.7443473552702926e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.2375213373161387e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 3373301760,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 2433777664,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 44.98774337768555,
+          "B": 45.11528015136719
+        },
+        "speedup": 0.9971730913948946,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-lowmemory-transposed",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "full-workspace",
+          "candidate": "low-memory",
+          "chunk_i": 128,
+          "noncontiguous_do": true,
+          "modes": "forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "full-workspace",
+          "B": "low-memory"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.6361227608285844e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.4017687135492451e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 843595776,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 642269184,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 6.22707200050354,
+          "B": 6.31604790687561
+        },
+        "speedup": 0.9859127245891831,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.6963356756605208e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 8.88151589606423e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2062590976,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 1511040000,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 25.163280487060547,
+          "B": 25.37504005432129
+        },
+        "speedup": 0.9916548085517335,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 1.8082539099850692e-05,
+            "baseline_zero_max_abs_diagnostic": 4.656612873077393e-10,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.3800740816805046e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 3373301760,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 2433777664,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 45.314720153808594,
+          "B": 45.740272521972656
+        },
+        "speedup": 0.9906963307234421,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-master-full-workspace-contiguous",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,640,768,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "original",
+          "candidate": "full-workspace",
+          "chunk_i": 128,
+          "noncontiguous_do": false,
+          "modes": "forward,backward,forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "original",
+          "B": "full-workspace"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.184888141229749e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.0992976058332715e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 591659008,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 843595776,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward",
+        "median_ms": {
+          "A": 1.5049439668655396,
+          "B": 1.4236159920692444
+        },
+        "speedup": 1.0571277474047505,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "backward",
+        "median_ms": {
+          "A": 7.5565760135650635,
+          "B": 4.754159927368164
+        },
+        "speedup": 1.5894660947487893,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 9.053552150726318,
+          "B": 6.178639888763428
+        },
+        "speedup": 1.4652985630690747,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 640,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.822439197800122e-05,
+            "baseline_zero_max_abs_diagnostic": 1.862645149230957e-09,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.7360624042339623e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 640,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 924467200,
+            "retained_increment_bytes": 845414400
+          },
+          "B": {
+            "peak_increment_bytes": 1317949440,
+            "retained_increment_bytes": 845414400
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward",
+        "median_ms": {
+          "A": 2.7923200130462646,
+          "B": 2.7193440198898315
+        },
+        "speedup": 1.0268358812355745,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "backward",
+        "median_ms": {
+          "A": 14.366064071655273,
+          "B": 8.95304012298584
+        },
+        "speedup": 1.6046017748509978,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 17.165120124816895,
+          "B": 11.682559967041016
+        },
+        "speedup": 1.4692944160563564,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 768,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 6.529648817377165e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.147406055679312e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 768,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1331232768,
+            "retained_increment_bytes": 1217396736
+          },
+          "B": {
+            "peak_increment_bytes": 1897684992,
+            "retained_increment_bytes": 1217396736
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward",
+        "median_ms": {
+          "A": 4.704352140426636,
+          "B": 4.59222412109375
+        },
+        "speedup": 1.0244169309633302,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "backward",
+        "median_ms": {
+          "A": 24.504783630371094,
+          "B": 15.113327980041504
+        },
+        "speedup": 1.621402226083616,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 29.18951988220215,
+          "B": 19.70790386199951
+        },
+        "speedup": 1.4811072799317309,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0009949858067557216,
+            "baseline_zero_max_abs_diagnostic": 4.267692565917969e-05,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.001039547729305923,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.001118561252951622,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 5.062800846644677e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0006215613102540374,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1447920640,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 2062590976,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward",
+        "median_ms": {
+          "A": 5.870207786560059,
+          "B": 6.208352088928223
+        },
+        "speedup": 0.9455339681892075,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "backward",
+        "median_ms": {
+          "A": 29.265583992004395,
+          "B": 18.95644760131836
+        },
+        "speedup": 1.543832716313845,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 35.12297439575195,
+          "B": 25.1626558303833
+        },
+        "speedup": 1.3958373326134281,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 7.516702316934243e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 9.568077985022683e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2366636032,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 3373301760,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward",
+        "median_ms": {
+          "A": 10.770304203033447,
+          "B": 10.57798433303833
+        },
+        "speedup": 1.0181811452862946,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "backward",
+        "median_ms": {
+          "A": 56.70913505554199,
+          "B": 34.5576171875
+        },
+        "speedup": 1.6410024669193488,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 67.38745498657227,
+          "B": 45.05710411071777
+        },
+        "speedup": 1.4956011114469905,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-master-full-workspace-transposed",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,640,768,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "original",
+          "candidate": "full-workspace",
+          "chunk_i": 128,
+          "noncontiguous_do": true,
+          "modes": "forward,backward,forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "original",
+          "B": "full-workspace"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 4.898450060863979e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.0281602044415195e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 591659008,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 843595776,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward",
+        "median_ms": {
+          "A": 1.492799997329712,
+          "B": 1.4230720400810242
+        },
+        "speedup": 1.0489981921398144,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "backward",
+        "median_ms": {
+          "A": 7.613680124282837,
+          "B": 4.805855989456177
+        },
+        "speedup": 1.584250577001661,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 9.110464096069336,
+          "B": 6.234143972396851
+        },
+        "speedup": 1.461381728816029,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 640,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.7976183597929776e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.6463758583995514e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 640,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 924467200,
+            "retained_increment_bytes": 845414400
+          },
+          "B": {
+            "peak_increment_bytes": 1317949440,
+            "retained_increment_bytes": 845414400
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward",
+        "median_ms": {
+          "A": 2.7920639514923096,
+          "B": 2.721776008605957
+        },
+        "speedup": 1.0258242936465418,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "backward",
+        "median_ms": {
+          "A": 14.342527866363525,
+          "B": 8.952192306518555
+        },
+        "speedup": 1.6021246388909662,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 17.108911514282227,
+          "B": 11.651103973388672
+        },
+        "speedup": 1.4684369441178522,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 768,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 6.394548836397007e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 6.159629720059456e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 768,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1331232768,
+            "retained_increment_bytes": 1217396736
+          },
+          "B": {
+            "peak_increment_bytes": 1897684992,
+            "retained_increment_bytes": 1217396736
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward",
+        "median_ms": {
+          "A": 4.657760143280029,
+          "B": 4.56713604927063
+        },
+        "speedup": 1.0198426526014859,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "backward",
+        "median_ms": {
+          "A": 24.442591667175293,
+          "B": 15.084784030914307
+        },
+        "speedup": 1.6203474718022728,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 29.0972318649292,
+          "B": 19.62979221343994
+        },
+        "speedup": 1.4822995347351247,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0009949858067557216,
+            "baseline_zero_max_abs_diagnostic": 4.267692565917969e-05,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0010401631006971002,
+            "baseline_zero_max_abs_diagnostic": 3.409385681152344e-05,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0011199250584468246,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 5.0449478294467553e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.000620376318693161,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1447920640,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 2062590976,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward",
+        "median_ms": {
+          "A": 5.813679933547974,
+          "B": 6.171823978424072
+        },
+        "speedup": 0.9419711180798211,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "backward",
+        "median_ms": {
+          "A": 29.20625591278076,
+          "B": 18.869407653808594
+        },
+        "speedup": 1.5478098967714964,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 35.024784088134766,
+          "B": 25.04192066192627
+        },
+        "speedup": 1.3986460767518698,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 7.471734716091305e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 8.161789992300328e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2366636032,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 3373301760,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward",
+        "median_ms": {
+          "A": 10.769120216369629,
+          "B": 10.510528087615967
+        },
+        "speedup": 1.024603152819538,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "backward",
+        "median_ms": {
+          "A": 56.972862243652344,
+          "B": 34.784767150878906
+        },
+        "speedup": 1.6378681506342299,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 67.65812683105469,
+          "B": 45.28611183166504
+        },
+        "speedup": 1.4940149218937062,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-master-large",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "1536,2048",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "original",
+          "candidate": "low-memory",
+          "chunk_i": 128,
+          "noncontiguous_do": false,
+          "modes": "forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "original",
+          "B": "low-memory"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 1536,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 9.278935613110662e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 8.74237321113469e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1536,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 5324931072,
+            "retained_increment_bytes": 4869586944
+          },
+          "B": {
+            "peak_increment_bytes": 5374525440,
+            "retained_increment_bytes": 4869586944
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1536,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 229.1181411743164,
+          "B": 151.33878326416016
+        },
+        "speedup": 1.5139420063553257,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 2048,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0001080069923773408,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 6.577567091881065e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 2048,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 9466544128,
+            "retained_increment_bytes": 8657043456
+          },
+          "B": {
+            "peak_increment_bytes": 9464512512,
+            "retained_increment_bytes": 8657043456
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 2048,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 532.9657287597656,
+          "B": 348.5565948486328
+        },
+        "speedup": 1.5290651120550909,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-master-low-memory-contiguous",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,640,768,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "original",
+          "candidate": "low-memory",
+          "chunk_i": 128,
+          "noncontiguous_do": false,
+          "modes": "forward,backward,forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "original",
+          "B": "low-memory"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.174135003471747e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.6508800399606116e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 591659008,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 642269184,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward",
+        "median_ms": {
+          "A": 1.494383990764618,
+          "B": 1.4240960478782654
+        },
+        "speedup": 1.0493561814114105,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "backward",
+        "median_ms": {
+          "A": 7.569664001464844,
+          "B": 4.800544023513794
+        },
+        "speedup": 1.576834617990686,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 9.067471981048584,
+          "B": 6.218591928482056
+        },
+        "speedup": 1.4581230100528455,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 640,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.834903276991099e-05,
+            "baseline_zero_max_abs_diagnostic": 5.587935447692871e-09,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 9.912683708535042e-06,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 640,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 924467200,
+            "retained_increment_bytes": 845414400
+          },
+          "B": {
+            "peak_increment_bytes": 982405120,
+            "retained_increment_bytes": 845414400
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward",
+        "median_ms": {
+          "A": 2.7906559705734253,
+          "B": 2.721455931663513
+        },
+        "speedup": 1.0254275801804416,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "backward",
+        "median_ms": {
+          "A": 14.385743618011475,
+          "B": 9.128959655761719
+        },
+        "speedup": 1.5758360383301673,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 17.16534423828125,
+          "B": 11.853103637695312
+        },
+        "speedup": 1.4481729649011013,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 768,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 6.509832746814936e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 2.111433059326373e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 768,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1331232768,
+            "retained_increment_bytes": 1217396736
+          },
+          "B": {
+            "peak_increment_bytes": 1394368512,
+            "retained_increment_bytes": 1217396736
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward",
+        "median_ms": {
+          "A": 4.6909918785095215,
+          "B": 4.590911865234375
+        },
+        "speedup": 1.0217995936783328,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "backward",
+        "median_ms": {
+          "A": 24.292880058288574,
+          "B": 15.196544170379639
+        },
+        "speedup": 1.5985792418278275,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 28.963808059692383,
+          "B": 19.744223594665527
+        },
+        "speedup": 1.4669509753484453,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0009949858067557216,
+            "baseline_zero_max_abs_diagnostic": 4.267692565917969e-05,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.001039551687426865,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.001118561252951622,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 5.062800846644677e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0006215597386471927,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1447920640,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 1511040000,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward",
+        "median_ms": {
+          "A": 5.812640190124512,
+          "B": 6.16158390045166
+        },
+        "speedup": 0.9433678554143246,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "backward",
+        "median_ms": {
+          "A": 29.039759635925293,
+          "B": 19.004207611083984
+        },
+        "speedup": 1.5280700058753405,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 34.85403251647949,
+          "B": 25.17038345336914
+        },
+        "speedup": 1.3847239387930008,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 7.515164907090366e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.28663568830234e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2366636032,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 2433777664,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward",
+        "median_ms": {
+          "A": 10.768847942352295,
+          "B": 10.49783992767334
+        },
+        "speedup": 1.0258155979273937,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "backward",
+        "median_ms": {
+          "A": 56.70489501953125,
+          "B": 34.57473564147949
+        },
+        "speedup": 1.640067348815882,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 67.39470291137695,
+          "B": 45.10153579711914
+        },
+        "speedup": 1.494288425443858,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  },
+  {
+    "run": "v4-benchmark-master-low-memory-transposed",
+    "records": [
+      {
+        "event": "environment",
+        "args": {
+          "shapes": "512,640,768,800,1024",
+          "dtype": "bf16",
+          "batch": 1,
+          "heads": 8,
+          "dim": 32,
+          "rounds": 3,
+          "samples": 10,
+          "warmup": 3,
+          "baseline": "original",
+          "candidate": "low-memory",
+          "chunk_i": 128,
+          "noncontiguous_do": true,
+          "modes": "forward,backward,forward_backward"
+        },
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "triton": "3.7.1",
+        "gpu": "NVIDIA H20-3e",
+        "capability": [
+          9,
+          0
+        ],
+        "revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+        "sources": {
+          "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        },
+        "labels": {
+          "A": "original",
+          "B": "low-memory"
+        },
+        "mask_probability": 0.2,
+        "timing": "CUDA event per iteration; warm ABBA; no CUDA graphs"
+      },
+      {
+        "event": "parity",
+        "n": 512,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 4.925262328470126e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.5903420717222616e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 512,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 591659008,
+            "retained_increment_bytes": 541065216
+          },
+          "B": {
+            "peak_increment_bytes": 642269184,
+            "retained_increment_bytes": 541065216
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward",
+        "median_ms": {
+          "A": 1.4956960082054138,
+          "B": 1.424448013305664
+        },
+        "speedup": 1.050017967826293,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "backward",
+        "median_ms": {
+          "A": 7.609839916229248,
+          "B": 4.899471998214722
+        },
+        "speedup": 1.5531959196832097,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 512,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 9.10763168334961,
+          "B": 6.319056034088135
+        },
+        "speedup": 1.441296237004152,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 640,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 5.81127023906447e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.67454854818061e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 640,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 924467200,
+            "retained_increment_bytes": 845414400
+          },
+          "B": {
+            "peak_increment_bytes": 982405120,
+            "retained_increment_bytes": 845414400
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward",
+        "median_ms": {
+          "A": 2.79203200340271,
+          "B": 2.721776008605957
+        },
+        "speedup": 1.025812555689598,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "backward",
+        "median_ms": {
+          "A": 14.456111907958984,
+          "B": 9.190160274505615
+        },
+        "speedup": 1.5729988896996305,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 640,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 17.241056442260742,
+          "B": 11.820112228393555
+        },
+        "speedup": 1.4586203674822413,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 768,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 6.38272103969939e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.366282049275469e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 768,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1331232768,
+            "retained_increment_bytes": 1217396736
+          },
+          "B": {
+            "peak_increment_bytes": 1394368512,
+            "retained_increment_bytes": 1217396736
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward",
+        "median_ms": {
+          "A": 4.658351898193359,
+          "B": 4.557583808898926
+        },
+        "speedup": 1.0221099805334743,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "backward",
+        "median_ms": {
+          "A": 24.444464683532715,
+          "B": 15.35643196105957
+        },
+        "speedup": 1.5918062702011988,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 768,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 29.100239753723145,
+          "B": 19.925024032592773
+        },
+        "speedup": 1.460487059193596,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 800,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0009949858067557216,
+            "baseline_zero_max_abs_diagnostic": 4.267692565917969e-05,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0010401647305116057,
+            "baseline_zero_max_abs_diagnostic": 3.409385681152344e-05,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0011199250584468246,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 5.0449478294467553e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0006203190423548222,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 800,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 1447920640,
+            "retained_increment_bytes": 1321451520
+          },
+          "B": {
+            "peak_increment_bytes": 1511040000,
+            "retained_increment_bytes": 1321451520
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward",
+        "median_ms": {
+          "A": 5.815455913543701,
+          "B": 6.161471843719482
+        },
+        "speedup": 0.9438420009127393,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "backward",
+        "median_ms": {
+          "A": 29.21359920501709,
+          "B": 19.076623916625977
+        },
+        "speedup": 1.5313820376548057,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 800,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 35.025760650634766,
+          "B": 25.242304801940918
+        },
+        "speedup": 1.3875817174960023,
+        "samples_per_label": 60
+      },
+      {
+        "event": "parity",
+        "n": 1024,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 7.47599988244474e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 1.4230408851290122e-05,
+            "baseline_zero_max_abs_diagnostic": 0.0,
+            "passed": true
+          }
+        },
+        "independent_reference": false
+      },
+      {
+        "event": "memory",
+        "n": 1024,
+        "measurements": {
+          "A": {
+            "peak_increment_bytes": 2366636032,
+            "retained_increment_bytes": 2164260864
+          },
+          "B": {
+            "peak_increment_bytes": 2433777664,
+            "retained_increment_bytes": 2164260864
+          }
+        }
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward",
+        "median_ms": {
+          "A": 10.770864009857178,
+          "B": 10.498800277709961
+        },
+        "speedup": 1.025913792523974,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "backward",
+        "median_ms": {
+          "A": 56.9674072265625,
+          "B": 35.20715141296387
+        },
+        "speedup": 1.6180635166520783,
+        "samples_per_label": 60
+      },
+      {
+        "event": "summary",
+        "n": 1024,
+        "mode": "forward_backward",
+        "median_ms": {
+          "A": 67.65508651733398,
+          "B": 45.71299171447754
+        },
+        "speedup": 1.4799969107230246,
+        "samples_per_label": 60
+      },
+      {
+        "event": "complete"
+      }
+    ]
+  }
+]
