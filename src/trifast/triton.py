@@ -22,6 +22,114 @@ from trifast.autotune_helpers import (
 
 
 # fmt: off
+@triton.jit
+def _fwd_kv_block(
+    # Loop-carried online-softmax state, returned updated.
+    acc, sm_denom, scores_max,
+    q_block,
+    # Pointer-path pointers, already advanced to start_k by the caller.
+    kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+    desc_b, desc_k, desc_v, desc_mask,
+    mask_j, k_idxs,
+    start_h, start_i, start_j, start_k, mask_start_h,
+    sm_scale, neg_inf2, inv_ln2, N,
+    input_dtype: tl.constexpr,
+    DIM: tl.constexpr, BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
+    USE_TMA: tl.constexpr, USE_TMA_BIAS: tl.constexpr, USE_TMA_MASK: tl.constexpr,
+    K_MASKED: tl.constexpr,
+):
+    """One k-block of the online softmax.
+
+    ``K_MASKED`` says whether this block can run past ``N``. The caller peels the
+    loop so that only the final partial block needs it, which lets every full block
+    skip three [j,k]-sized selects and the [k] range compare -- pure waste whenever
+    ``k + BLOCK_K <= N``, i.e. always when ``N % BLOCK_K == 0``.
+    """
+    if K_MASKED:
+        mask_k = (k_idxs + start_k) < N
+        in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
+    else:
+        # Every column is in range; only the j >= N rows still need killing, and
+        # `mask_j` alone is what `in_range` collapses to.
+        in_range = tl.broadcast_to(mask_j[:, None], (BLOCK_J, BLOCK_K))
+
+    if USE_TMA:
+        kt_block = desc_k.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM).T  # [d,k]
+    elif K_MASKED:
+        kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
+    else:
+        kt_block = tl.load(kt_ptrs)  # [d,k]
+    if USE_TMA_BIAS:
+        b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
+    else:
+        b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
+
+    # By TMA lands the row in shared memory once per CTA and broadcasts from there.
+    if USE_TMA_MASK:
+        # desc_mask is the widened mask flattened to [batch * N, padded_n], so a
+        # row is (batch, i). Reusing N here rather than passing the mask's own
+        # row count is deliberate -- the extra argument costs the whole speedup.
+        # torch.py's shape checks guarantee the mask really is n x n, so N is right.
+        mask_row = mask_start_h * N + start_i
+        if BLOCK_K >= 64:
+            # bf16 * BLOCK_K >= 128 bytes, the minimum this load tolerates.
+            m_block = (desc_mask.load([mask_row, start_k]).reshape(BLOCK_K) != 0) # [k]
+        else:
+            # BLOCK_K=32 would give a 64-byte box, the one size that faults with
+            # a misaligned address, so fetch two i rows (128 bytes) instead.
+            pair = desc_mask.load([mask_row, start_k]).reshape(2, BLOCK_K)
+            # Keep row 0 and discard row 1 (the next i). Masking then summing
+            # over axis 0 is how to select a row without a dynamic slice, and
+            # costs ~2 ops per lane on a tensor this small.
+            m_block = tl.sum(
+                tl.where(tl.arange(0, 2)[:, None] == 0, pair, 0.0), axis=0
+            ) != 0
+    elif K_MASKED:
+        # Load the [k] key mask.
+        # a rank-1 [k] tensor feeding a [j,k] broadcast is assigned slice<dim=0, parent=#mma>,
+        # a layout *replicated* along the projected j dimension
+        # -- all four warps hold the same columns,
+        # and eight lanes within a warp share each column.
+        # So the pointer path below issues eight 2-byte LDGs per warp per iteration.
+        m_block = (tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0) # [k]
+    else:
+        m_block = (tl.load(mask_ptrs, cache_modifier=".cg") != 0) # [k]
+
+    # P = Q [BLOCK_J, D] @ K^T [D, BLOCK_K]
+    scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
+    # Online Softmax
+    scores = scores * sm_scale + b_block
+    scores *= inv_ln2 # 1.0 / ln(2), [j,k]
+    scores = tl.where(m_block[None, :], neg_inf2, scores)
+    scores = tl.where(in_range, scores, neg_inf2)
+    block_max = tl.maximum(scores_max, tl.max(scores, axis=1)) # [j]
+    exp_scores = tl.math.exp2(scores - block_max[:, None])     # [j,k]
+    if K_MASKED:
+        # Columns past N must not reach sm_denom. They are already neg_inf2, which
+        # underflows exp2 to 0 for any row that has a live key -- but a fully masked
+        # row has block_max == neg_inf2, so exp2(0) == 1 and the padding would count.
+        # That combination (ragged N + fully masked row) is what this select is for.
+        exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
+    # (TODO) no need to update acc if scores_max == block_max
+    exp_scale = tl.math.exp2(scores_max - block_max)
+    sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, axis=1)
+    acc = acc * exp_scale[:, None]
+    scores_max = block_max
+    # Load V
+    if USE_TMA:
+        v_block = desc_v.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM)  # [k,d]
+    elif K_MASKED:
+        v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
+    else:
+        v_block = tl.load(v_ptrs)  # [k,d]
+    # P fp32 -> bf16
+    exp_scores = exp_scores.to(input_dtype)  # [j,k]
+
+    # O = P @ V
+    acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
+    return acc, sm_denom, scores_max
+
+
 @autotune(
     configs=_fwd_configs,
     key=["H", "DIM", "CLOSEST_N"],
@@ -40,6 +148,9 @@ def _fwd(
     mask_ptr, stride_maskh, stride_maskm, stride_maskn,
     desc_b,
     desc_q, desc_k, desc_v, desc_o,
+    # Widened mask, flattened to [batch * N, padded_n]; `mask_ptr` above stays for
+    # the pointer fallback. Built in trifast.torch._triangle_attention.
+    desc_mask,
     sm_scale,
     neg_inf,
     N,   # N is varing during training
@@ -50,6 +161,7 @@ def _fwd(
     BLOCK_K: tl.constexpr,
     USE_TMA: tl.constexpr = False,
     USE_TMA_BIAS: tl.constexpr = False,
+    USE_TMA_MASK: tl.constexpr = False,
 ):
     input_dtype = q_ptr.dtype.element_ty
 
@@ -113,63 +225,52 @@ def _fwd(
 
     mask_j = j_idxs < N
 
-    # The TMA path loads q/k/v through rank-4 descriptors over the natural
-    # [bh, n, n, dim] layout, one (h, i) slice per box row. Rows beyond n are
-    # clipped by the tensormap (zero-filled loads, no-op stores), so they
-    # never wrap into the neighbouring i slice the way a flat 2D view would.
-    # Clipped rows are the j >= N tail this kernel already treats as garbage:
-    # `in_range` kills their scores and every store is masked or clipped.
     if USE_TMA:
-        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM)
+        # The TMA path loads q/k/v through rank-4 descriptors over the natural
+        # [bh, n, n, dim] layout, one (h, i) slice per box row.
+        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM) # [j,d]
     else:
         q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
 
-    for start_k in tl.range(0, N, BLOCK_K):
+    # Peel the k loop: full blocks cannot run past N, so they skip the range compare
+    # and three [j,k] selects that are no-ops there. `n_full` is a runtime value, so
+    # this stays one kernel variant per CLOSEST_N bucket -- no new specialization.
+    n_full = (N // BLOCK_K) * BLOCK_K
+    for start_k in tl.range(0, n_full, BLOCK_K):
         start_k = tl.multiple_of(start_k, BLOCK_K)
-        mask_k = (k_idxs + start_k) < N
-        in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
-
-        if USE_TMA:
-            kt_block = desc_k.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM).T  # [d,k]
-        else:
-            kt_block = tl.load(kt_ptrs, mask_k[None, :])  # [d,k]
-        if USE_TMA_BIAS:
-            b_block = desc_b.load([start_h * N + start_j, start_k]).to(tl.float32)
-        else:
-            b_block = tl.load(b_ptrs, in_range).to(tl.float32)  # [j,k]
-        m_block = tl.load(mask_ptrs, mask_k, cache_modifier=".cg") != 0 # [k]
-
-        # P = Q [BLOCK_J, D] @ K^T [D, BLOCK_K]
-        scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
-        # Online Softmax
-        scores = scores * sm_scale + b_block
-        scores *= inv_ln2 # 1.0 / ln(2), [j,k]
-        scores = tl.where(m_block[None, :], neg_inf2, scores)
-        scores = tl.where(in_range, scores, neg_inf2)
-        block_max = tl.maximum(scores_max, tl.max(scores, axis=1)) # [j]
-        exp_scores = tl.math.exp2(scores - block_max[:, None])     # [j,k]
-        exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
-        # (TODO) no need to update acc if scores_max == block_max
-        exp_scale = tl.math.exp2(scores_max - block_max)
-        sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, axis=1)
-        acc = acc * exp_scale[:, None]
-        scores_max = block_max
-        # Load V
-        if USE_TMA:
-            v_block = desc_v.load([start_h, start_i, start_k, 0]).reshape(BLOCK_K, DIM)  # [k,d]
-        else:
-            v_block = tl.load(v_ptrs, mask_k[:, None])  # [k,d]
-        # P fp32 -> bf16
-        exp_scores = exp_scores.to(input_dtype)  # [j,k]
-
-        # O = P @ V
-        acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
-
+        acc, sm_denom, scores_max = _fwd_kv_block(
+            acc, sm_denom, scores_max, q_block,
+            kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+            desc_b, desc_k, desc_v, desc_mask,
+            mask_j, k_idxs,
+            start_h, start_i, start_j, start_k, mask_start_h,
+            sm_scale, neg_inf2, inv_ln2, N,
+            input_dtype,
+            DIM, BLOCK_J, BLOCK_K,
+            USE_TMA, USE_TMA_BIAS, USE_TMA_MASK,
+            K_MASKED=False,
+        )
         # Advance to next block along the k dimension.
         kt_ptrs += BLOCK_K * stride_kn
         v_ptrs += BLOCK_K * stride_vn
         b_ptrs += BLOCK_K * stride_bn
         mask_ptrs += BLOCK_K * stride_maskn
+
+    # The ragged tail, at most one block, and only when N is not a multiple of
+    # BLOCK_K. The pointers were left pointing at it by the loop above.
+    if n_full < N:
+        acc, sm_denom, scores_max = _fwd_kv_block(
+            acc, sm_denom, scores_max, q_block,
+            kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+            desc_b, desc_k, desc_v, desc_mask,
+            mask_j, k_idxs,
+            start_h, start_i, start_j, n_full, mask_start_h,
+            sm_scale, neg_inf2, inv_ln2, N,
+            input_dtype,
+            DIM, BLOCK_J, BLOCK_K,
+            USE_TMA, USE_TMA_BIAS, USE_TMA_MASK,
+            K_MASKED=True,
+        )
 
 
     normalize = acc / sm_denom[:, None]

@@ -17,7 +17,7 @@ import triton.testing
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
-from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS
+from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS, USE_TMA_MASK
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
@@ -125,6 +125,26 @@ def _make_launchers(
     else:
         desc_b = bias
 
+    # The bool mask reaches _fwd as a bf16 copy through a TMA descriptor. Keep this
+    # block in sync with trifast.torch._triangle_attention, which explains why the
+    # copy exists and why bf16 and rank-2 are both load bearing. gen_tensors always
+    # makes the mask [batch, n, n], so no n x n shape gate is needed here.
+    use_tma_mask = USE_TMA_MASK
+    if use_tma_mask:
+        # bf16 entries per 16 bytes, the row-pitch alignment TMA requires.
+        mask_alignment = 16 // torch.bfloat16.itemsize
+        padded_mask_n = triton.cdiv(n, mask_alignment) * mask_alignment
+        wide_mask = torch.nn.functional.pad(
+            mask.to(torch.bfloat16), (0, padded_mask_n - n)
+        )
+        # (batch, i) folded into one row axis; block_shape is a placeholder that
+        # _fwd_descriptor_pre_hook rewrites per autotune config.
+        desc_mask = TensorDescriptor.from_tensor(
+            wide_mask.reshape(mask.shape[0] * n, padded_mask_n), block_shape=[1, 32]
+        )
+    else:
+        desc_mask = mask
+
     # Keep this in sync with trifast.torch._triangle_attention.
     use_tma = USE_TMA and d * q.element_size() % 16 == 0
     if use_tma:
@@ -193,6 +213,7 @@ def _make_launchers(
             desc_k,
             desc_v,
             desc_o,
+            desc_mask,
             sm_scale=sm_scale,
             neg_inf=MASK_FILL,
             N=n,
@@ -201,6 +222,7 @@ def _make_launchers(
             CLOSEST_N=closest_n,
             USE_TMA=use_tma,
             USE_TMA_BIAS=use_tma_bias,
+            USE_TMA_MASK=use_tma_mask,
         )
 
     def run_bwd_q() -> None:
