@@ -48,6 +48,33 @@ def _triangle_attention(
     and is for callers and diagnostics only. The backward consumes `mx` (the base-two
     normalization offset) and `dn` (the corresponding denominator) instead.
     """
+    # Validate the layout before unpacking it. A wrongly-ordered 5-D tensor still
+    # unpacks, so this used to fail silently rather than loudly: test_weight_updates
+    # passed q as [b, n, n, h, d], which made the destructuring below read h=n and
+    # n=1, and the kernel filled a single i slice and left 93.8% of the output zero.
+    # torch._check raises eagerly and becomes a guard under torch.compile.
+    torch._check(
+        q.ndim == 5 and k.shape == q.shape and v.shape == q.shape,
+        lambda: "q/k/v must all be [batch, heads, n, n, dim]; got "
+        f"q={tuple(q.shape)}, k={tuple(k.shape)}, v={tuple(v.shape)}",
+    )
+    torch._check(
+        q.shape[2] == q.shape[3],
+        lambda: "q/k/v are [batch, heads, n, n, dim], so dims 2 and 3 must match; "
+        f"got {tuple(q.shape)} -- is the head axis in the wrong position?",
+    )
+    torch._check(
+        b.ndim == 4 and b.shape == q.shape[:4],
+        lambda: f"bias must be [batch, heads, n, n] = {tuple(q.shape[:4])}; "
+        f"got {tuple(b.shape)}",
+    )
+    torch._check(
+        mask.ndim == 3
+        and mask.shape == (q.shape[0], q.shape[2], q.shape[3]),
+        lambda: "mask must be [batch, n, n] = "
+        f"{(q.shape[0], q.shape[2], q.shape[3])}; got {tuple(mask.shape)}",
+    )
+
     sm_scale = q.shape[-1] ** -0.5
 
     bs, h, _, n, dim = q.shape
