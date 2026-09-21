@@ -79,6 +79,14 @@ def _fwd_descriptor_pre_hook(nargs):
         "desc_o": [1, 1, block_j, dim],
         # Bias is the padded [bh, n, padded_n] tensor reshaped 2D.
         "desc_b": [block_j, block_k],
+        # The mask depends only on k inside the loop, so a single row of BLOCK_K
+        # columns is all _fwd needs. But the box must be >= 128 bytes or the load
+        # faults with a misaligned address, and bf16 gives only 64 bytes at
+        # BLOCK_K=32 -- the one failing size. Those configs therefore take two i
+        # rows (2 * 32 * 2 B = 128) and the kernel drops the second. Autotuning has
+        # to try BLOCK_K=32, so getting this wrong is a cold-cache crash, not a
+        # slow path. Must stay rank-2 to match the flat view torch.py builds.
+        "desc_mask": [1, block_k] if block_k >= 64 else [2, block_k],
     }
     for name, block_shape in tiles.items():
         desc = nargs.get(name)

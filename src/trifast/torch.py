@@ -29,6 +29,9 @@ from trifast.triton import (
 MASK_FILL = -1e4
 USE_TMA = True
 USE_TMA_BIAS = True
+# Route the bool mask through TMA as a bf16 copy instead of a per-iteration pointer
+# load. Worth ~+2% on the forward; flip to False to fall back to the pointer load.
+USE_TMA_MASK = True
 
 
 @triton_op("trifast::triangle_attention", mutates_args={})
@@ -73,6 +76,49 @@ def _triangle_attention(
         and dim <= 64
         and not _is_fake(b)
     )
+    # Two gates. Fake tensors cannot build a tensormap (as for q/k/v/o above), and
+    # the flat [batch * n, padded_n] view built below addresses rows as
+    # `batch * N + i`, which silently breaks unless the mask really is n x n:
+    # test_weight_updates feeds q as [b, n, n, h, d], so the destructuring above
+    # yields n=1 against a [b, 16, 16] mask. Both cases fall back to the pointer
+    # path, which only ever uses mask strides and so does not care. (Passing the
+    # mask's true row count would also work, but measures ~2% slower than reusing N.)
+    can_use_tma_mask = (
+        USE_TMA_MASK
+        and not _is_fake(mask)
+        and mask.shape[1] == n
+        and mask.shape[2] == n
+    )
+    if can_use_tma_mask:
+        # Why copy the mask at all: a bool tensor cannot go through TMA here. _fwd's
+        # mask box must be >= 128 bytes or the pipelined loop faults with
+        # cudaErrorMisalignedAddress -- 64 bytes is the only failing size, 128
+        # through 512 all work, and a 1-byte box loads fine in a *standalone*
+        # kernel, so this is a shared-memory alignment limit, not a TMA one.
+        #
+        # Why bf16 and not something wider: a 4-byte copy doubles the TMA traffic
+        # and cancels the entire speedup. BLOCK_K=32 configs reach 128 bytes with a
+        # 2-row box instead (see _fwd_descriptor_pre_hook).
+        MASK_TMA_DTYPE = torch.bfloat16
+        # Entries per 16 bytes, which is the row-pitch alignment TMA requires.
+        mask_alignment = 16 // MASK_TMA_DTYPE.itemsize
+        # Round the row length up so every row starts 16-byte aligned.
+        padded_mask_n = triton.cdiv(n, mask_alignment) * mask_alignment
+        # The widened copy. Only the truth of each entry is read, so 0.0/1.0 is
+        # enough. Costs n**2 * 2 B (2 MB at n=1024) and ~35 us, once per call.
+        wide_mask = torch.nn.functional.pad(
+            mask.to(MASK_TMA_DTYPE), (0, padded_mask_n - n)
+        )
+        # Fold (batch, i) into a single row axis so the kernel can address a row as
+        # `batch * N + i`. Rank-2 is load bearing: a rank-3 box over [batch, i, k]
+        # gives up the whole speedup. block_shape is a placeholder that
+        # _fwd_descriptor_pre_hook rewrites to [1, BLOCK_K] (or [2, BLOCK_K]).
+        desc_mask = TensorDescriptor.from_tensor(
+            wide_mask.reshape(mask.shape[0] * n, padded_mask_n), block_shape=[1, 32]
+        )
+    else:
+        # Pointer fallback: _fwd indexes `mask` through its strides instead.
+        desc_mask = mask
     if can_use_tma_bias:
         # on hopper, tma requires 16 bytes alignment
         bias_alignment = 16 // b.element_size()
@@ -109,7 +155,13 @@ def _triangle_attention(
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
 
-    fwd_kernel = _fwd if (can_use_tma or can_use_tma_bias) else _fwd_pointer
+    # _fwd_pointer is the hook-free clone for traced/fake-tensor execution, so it is
+    # only reachable when *no* descriptor was built. The mask now joins that vote.
+    fwd_kernel = (
+        _fwd
+        if (can_use_tma or can_use_tma_bias or can_use_tma_mask)
+        else _fwd_pointer
+    )
 
     # fmt: off
     wrap_triton(fwd_kernel)[grid](
@@ -122,11 +174,13 @@ def _triangle_attention(
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         desc_b,
         desc_q, desc_k, desc_v, desc_o,
+        desc_mask,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
         CLOSEST_N=CLOSEST_N,
         USE_TMA=can_use_tma,
         USE_TMA_BIAS=can_use_tma_bias,
+        USE_TMA_MASK=can_use_tma_mask,
     )
 
     o = rearrange(o, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
