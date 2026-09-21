@@ -68,8 +68,8 @@ def _fwd_kv_block(
     if USE_TMA_MASK:
         # desc_mask is the widened mask flattened to [batch * N, padded_n], so a
         # row is (batch, i). Reusing N here rather than passing the mask's own
-        # row count is deliberate -- the extra argument costs the whole speedup,
-        # so torch.py instead gates the descriptor on the mask being n x n.
+        # row count is deliberate -- the extra argument costs the whole speedup.
+        # torch.py's shape checks guarantee the mask really is n x n, so N is right.
         mask_row = mask_start_h * N + start_i
         if BLOCK_K >= 64:
             # bf16 * BLOCK_K >= 128 bytes, the minimum this load tolerates.
@@ -225,14 +225,10 @@ def _fwd(
 
     mask_j = j_idxs < N
 
-    # The TMA path loads q/k/v through rank-4 descriptors over the natural
-    # [bh, n, n, dim] layout, one (h, i) slice per box row. Rows beyond n are
-    # clipped by the tensormap (zero-filled loads, no-op stores), so they
-    # never wrap into the neighbouring i slice the way a flat 2D view would.
-    # Clipped rows are the j >= N tail this kernel already treats as garbage:
-    # `in_range` kills their scores and every store is masked or clipped.
     if USE_TMA:
-        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM)
+        # The TMA path loads q/k/v through rank-4 descriptors over the natural
+        # [bh, n, n, dim] layout, one (h, i) slice per box row.
+        q_block = desc_q.load([start_h, start_i, start_j, 0]).reshape(BLOCK_J, DIM) # [j,d]
     else:
         q_block = tl.load(q_ptrs, mask_j[:, None])  # [j,d]
 

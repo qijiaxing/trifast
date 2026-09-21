@@ -90,6 +90,20 @@ def _triangle_attention(
     bh = q.shape[0]
     # Traced/fake tensor execution (torch.compile, opcheck) cannot build
     # tensormaps, so it falls back to the pointer kernel.
+    #
+    # Every pointer branch in `_fwd` is still reachable -- measured, not assumed, by
+    # logging the flag combinations across the test matrix:
+    #
+    #   TMA  BIAS  MASK   reached by
+    #    Y     Y     Y    the normal case, every tested shape with dim <= 64
+    #    Y     N     Y    dim > 64, e.g. the (16, 4, 128) case in test_values
+    #    N     Y     Y    dim where dim * element_size % 16 != 0, e.g. dim=4 bf16
+    #    N     N     N    fake tensors, i.e. torch.compile and opcheck
+    #
+    # The last row is the one that cannot be designed away: TensorDescriptor needs a
+    # real data pointer, and the descriptor construction below runs during fake
+    # tracing. Since `_fwd_pointer` is `autotune(...)(_fwd.fn)` -- the same kernel
+    # body -- the branches have to live here rather than in a separate kernel.
     _is_fake = lambda t: type(t).__name__ in {"FakeTensor", "FunctionalTensor"}
     # TMA needs 16-byte-aligned global strides; a contiguous [*, dim] inner
     # layout gives dim * element_size bytes per row.
@@ -98,24 +112,26 @@ def _triangle_attention(
         and dim * q.element_size() % 16 == 0
         and not _is_fake(q)
     )
+    # The dim limit is a measured performance gate, not an alignment one -- the bias
+    # box is [BLOCK_J, BLOCK_K] and does not depend on dim at all. Lifting it works
+    # and is bit-identical, but at dim=128 the TMA bias is 4.0-4.2% *slower* than the
+    # pointer load (99.4 vs 103.6 TFLOP/s, n=256 h=2, reproduced), because those
+    # configs are already register-tight enough that the extra descriptor does not
+    # pay. So dim > 64 keeps the pointer path deliberately.
     can_use_tma_bias = (
         USE_TMA_BIAS
         and dim <= 64
         and not _is_fake(b)
     )
-    # Two gates. Fake tensors cannot build a tensormap (as for q/k/v/o above), and
-    # the flat [batch * n, padded_n] view built below addresses rows as
-    # `batch * N + i`, which silently breaks unless the mask really is n x n:
-    # test_weight_updates feeds q as [b, n, n, h, d], so the destructuring above
-    # yields n=1 against a [b, 16, 16] mask. Both cases fall back to the pointer
-    # path, which only ever uses mask strides and so does not care. (Passing the
-    # mask's true row count would also work, but measures ~2% slower than reusing N.)
-    can_use_tma_mask = (
-        USE_TMA_MASK
-        and not _is_fake(mask)
-        and mask.shape[1] == n
-        and mask.shape[2] == n
-    )
+    # Fake tensors cannot build a tensormap, as for q/k/v/o above. Nothing else is
+    # needed: the flat [batch * n, padded_n] view built below addresses rows as
+    # `batch * N + i`, which requires the mask to really be n x n, but the
+    # torch._check calls at the top of this function already guarantee that
+    # (mask.shape == (batch, q.shape[2], q.shape[3]) and q.shape[2] == q.shape[3],
+    # and n is q.shape[3]). Reusing N for that row index rather than passing the
+    # mask's own row count is deliberate -- the extra kernel argument measures ~2%
+    # slower.
+    can_use_tma_mask = USE_TMA_MASK and not _is_fake(mask)
     if can_use_tma_mask:
         # Why copy the mask at all: a bool tensor cannot go through TMA here. _fwd's
         # mask box must be >= 128 bytes or the pipelined loop faults with
