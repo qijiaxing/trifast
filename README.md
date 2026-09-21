@@ -1,5 +1,7 @@
 # TriFast
 
+> **Runtime-N experiment branch.** The opt-in fused API on this branch reuses kernels across sequence lengths, but currently regresses in performance. See [dynamic-N results](docs/dynamic_n.md) / [中文报告](docs/dynamic_n_zh.md). Historical fused benchmarks below describe commit `249f3e2` (PR #3), not this experimental implementation. The original `triangle_attention` remains unchanged.
+
 This is TriFast fork, which is optimized for Hopper GPU.
 
 `src/trifast/triton.py`: the fwd and bwd kernels.

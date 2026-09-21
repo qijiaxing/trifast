@@ -1,5 +1,7 @@
 # H20 fused attention measurements
 
+> Historical record: this document describes the shape-specialized `249f3e2` implementation in PR #3. It does not describe the runtime-N code or performance on this experimental branch. See the [dynamic-N report](../dynamic_n.md).
+
 These measurements compare the opt-in fused implementation against upstream master **b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb**. Low-memory backward with `chunk_i=128` is the primary reported configuration. The original `triangle_attention` API remains available; these tables do not imply changing its dispatch.
 
 For N512–1024, low-memory backward is **1.528–1.640×** faster and complete forward+backward is **1.385–1.494×** faster. Forward is **1.022–1.050×** faster on aligned shapes and **0.943–0.944× at N800**: approximately 6% slower there. The forward regression is included in the end-to-end results.

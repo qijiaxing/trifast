@@ -10,7 +10,12 @@ import torch
 from torch.autograd.function import once_differentiable
 
 from trifast._fused_backward import fused_backward
-from trifast._fused_forward import fused_forward_optimized as fused_forward
+from trifast._fused_dispatch import (
+    fused_backward_dispatch,
+)
+from trifast._fused_dispatch import (
+    fused_forward_dispatch as fused_forward,
+)
 
 
 def _check_determinism():
@@ -101,7 +106,7 @@ class _FusedAttention(torch.autograd.Function):
         q, k, v, bias, mask, o, mx, dn = ctx.saved_tensors
         # Autograd expects None for the boolean mask; avoid allocating the
         # compatibility dmask output used by the direct five-output interface.
-        dq, dk, dv, db = fused_backward(
+        dq, dk, dv, db = fused_backward_dispatch(
             do,
             q,
             k,
@@ -111,8 +116,7 @@ class _FusedAttention(torch.autograd.Function):
             mx,
             dn,
             mask,
-            bj=_backward_block_j(q),
-            centered_stats=(q.dtype == torch.float32),
+            chunk_i=0,
         )
         return dq, dk, dv, db, None
 

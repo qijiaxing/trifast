@@ -8,9 +8,8 @@ are supported. This module is intentionally not exported from package init.
 import torch
 from torch.autograd.function import once_differentiable
 
-from trifast._fused_chunked import fused_backward
+from trifast._fused_dispatch import fused_backward_dispatch
 from trifast.fused_api import (
-    _backward_block_j,
     _check_determinism,
     _validate,
     fused_forward,
@@ -30,7 +29,7 @@ class _LowMemoryAttention(torch.autograd.Function):
     def backward(ctx, do):
         _check_determinism()
         q, k, v, bias, mask, o, mx, dn = ctx.saved_tensors
-        dq, dk, dv, db = fused_backward(
+        dq, dk, dv, db = fused_backward_dispatch(
             do,
             q,
             k,
@@ -41,8 +40,6 @@ class _LowMemoryAttention(torch.autograd.Function):
             dn,
             mask,
             chunk_i=ctx.chunk_i,
-            bj=_backward_block_j(q),
-            centered_stats=(q.dtype == torch.float32),
         )
         return dq, dk, dv, db, None, None
 

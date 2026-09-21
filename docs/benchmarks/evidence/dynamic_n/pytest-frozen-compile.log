@@ -1,0 +1,12 @@
+..................                                                       [100%]
+=============================== warnings summary ===============================
+tests/unit/test_fused.py: 14 warnings
+  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/unit/test_fused.py::test_compile_reuse[32-dtype0-full]
+  /workspace/trifast-pr/src/trifast/autotune_helpers.py:23: DeprecationWarning: support for supplying keyword arguments to pathlib.PurePath is deprecated and scheduled for removal in Python 3.14
+    config_dir = Path(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+18 passed, 331 deselected, 15 warnings in 9.33s

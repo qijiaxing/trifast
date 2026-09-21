@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/unit/test_fused.py",
+    "tests/unit/test_fused_contracts.py",
+    "-m",
+    "not compile"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-21T09:04:19.524417+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-21T09:07:21.953458+00:00",
+  "wall_seconds": 182.42904880270362
+}

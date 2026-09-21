@@ -8,11 +8,11 @@ import torch
 import triton
 import triton.language as tl
 
-from trifast._fused_backward import _preprocess
+from trifast._fused_backward import _prepare_do, _preprocess
 
 
-@triton.jit
-def _chunk_bwd_k_owned(
+@triton.jit(do_not_specialize=["N", "I_START", "CHUNK_I"])
+def _chunk_bwd_k_owned_body(
     Q,
     K,
     V,
@@ -28,30 +28,28 @@ def _chunk_bwd_k_owned(
     DK,
     DV,
     DB,
-    N: tl.constexpr,
+    N: tl.int64,
     H: tl.constexpr,
     D: tl.constexpr,
     BJ: tl.constexpr,
     BK: tl.constexpr,
-    I_START,
-    CHUNK_I: tl.constexpr,
-    DOH: tl.constexpr,
-    DOI: tl.constexpr,
-    DOJ: tl.constexpr,
-    DOD: tl.constexpr,
+    I_START: tl.int64,
+    CHUNK_I: tl.int64,
     CENTERED: tl.constexpr = False,
+    ALIGNED: tl.constexpr = False,
 ):
     k = tl.program_id(0) * BK + tl.arange(0, BK)
+    k_valid = tl.full((BK,), True, tl.int1) if ALIGNED else k < N
     local_i = tl.program_id(1)
     i = local_i + I_START
     bh = tl.program_id(2).to(tl.int64)
     d = tl.arange(0, D)
     koff = ((bh * N + i) * N + k[:, None]) * D + d[None, :]
-    kk = tl.load(K + koff, k[:, None] < N, 0)
-    v = tl.load(V + koff, k[:, None] < N, 0)
-    masked = tl.load(M + ((bh // H) * N + i) * N + k, k < N, 1) != 0
+    kk = tl.load(K + koff, k_valid[:, None], 0)
+    v = tl.load(V + koff, k_valid[:, None], 0)
+    masked = tl.load(M + ((bh // H) * N + i) * N + k, k_valid, 1) != 0
     singleton = tl.load(COUNT + bh * N + i) == 1
-    owns_singleton = singleton & (tl.sum(((k < N) & ~masked).to(tl.int32), 0) > 0)
+    owns_singleton = singleton & (tl.sum((k_valid & ~masked).to(tl.int32), 0) > 0)
     singleton_diff = tl.load(DIFF + (bh * N + i) * D + d, owns_singleton, 0)
     dk = tl.zeros((BK, D), tl.float32)
     dv = tl.zeros((BK, D), tl.float32)
@@ -60,28 +58,24 @@ def _chunk_bwd_k_owned(
     invln2: tl.constexpr = 1.4426950408889634
     for start_j in range(0, N, BJ):
         j = start_j + tl.arange(0, BJ)
-        valid = (j[:, None] < N) & (k[None, :] < N)
+        j_valid = tl.full((BJ,), True, tl.int1) if ALIGNED else j < N
+        valid = (j_valid[:, None]) & (k_valid[None, :])
         qoff = ((bh * N + i) * N + j[:, None]) * D + d[None, :]
         boff = bh * N * N + j[:, None].to(tl.int64) * N + k[None, :]
         bias = tl.load(B + boff, valid, 0).to(tl.float32)
         if CENTERED:
-            shift = tl.load(B + bh * N * N + j.to(tl.int64) * N, j < N, 0).to(
+            shift = tl.load(B + bh * N * N + j.to(tl.int64) * N, j_valid, 0).to(
                 tl.float32
             )
         else:
             shift = tl.full((BJ,), 0.0, tl.float32)
         sentinel2 = (-1.0e4 - shift) * invln2
-        q = tl.load(Q + qoff, j[:, None] < N, 0)
-        doff = (
-            bh * DOH
-            + i.to(tl.int64) * DOI
-            + j[:, None].to(tl.int64) * DOJ
-            + d[None, :].to(tl.int64) * DOD
-        )
-        do = tl.load(DO + doff, j[:, None] < N, 0)
-        delta = tl.load(DELTA + (bh * N + i) * N + j, j < N, 0)
-        mx = tl.load(MX + (bh * N + i) * N + j, j < N, 0)
-        dn = tl.load(DN + (bh * N + i) * N + j, j < N, 1)
+        q = tl.load(Q + qoff, j_valid[:, None], 0)
+        doff = qoff
+        do = tl.load(DO + doff, j_valid[:, None], 0)
+        delta = tl.load(DELTA + (bh * N + i) * N + j, j_valid, 0)
+        mx = tl.load(MX + (bh * N + i) * N + j, j_valid, 0)
+        dn = tl.load(DN + (bh * N + i) * N + j, j_valid, 1)
         s = (
             tl.dot(q, tl.trans(kk), input_precision="ieee") * scale
             + (bias - shift[:, None])
@@ -107,28 +101,138 @@ def _chunk_bwd_k_owned(
         tl.atomic_add(
             DQ + ((bh * CHUNK_I + local_i) * N + j[:, None]) * D + d[None, :],
             dq,
-            j[:, None] < N,
+            j_valid[:, None],
             sem="relaxed",
         )
         tl.atomic_add(DB + boff, ds, valid, sem="relaxed")
-    tl.store(DK + koff, dk * scale, k[:, None] < N)
-    tl.store(DV + koff, dv, k[:, None] < N)
+    tl.store(DK + koff, dk * scale, k_valid[:, None])
+    tl.store(DV + koff, dv, k_valid[:, None])
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["N", "I_START", "CHUNK_I"])
+def _chunk_bwd_k_owned(
+    Q,
+    K,
+    V,
+    B,
+    DELTA,
+    COUNT,
+    DIFF,
+    DO,
+    MX,
+    DN,
+    M,
+    DQ,
+    DK,
+    DV,
+    DB,
+    N: tl.int64,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    BJ: tl.constexpr,
+    BK: tl.constexpr,
+    I_START: tl.int64,
+    CHUNK_I: tl.int64,
+    CENTERED: tl.constexpr = False,
+):
+    ALIGNMENT: tl.constexpr = max(BJ, BK)
+    if N % ALIGNMENT == 0:
+        _chunk_bwd_k_owned_body(
+            Q,
+            K,
+            V,
+            B,
+            DELTA,
+            COUNT,
+            DIFF,
+            DO,
+            MX,
+            DN,
+            M,
+            DQ,
+            DK,
+            DV,
+            DB,
+            tl.multiple_of(N, ALIGNMENT),
+            H,
+            D,
+            BJ,
+            BK,
+            I_START,
+            CHUNK_I,
+            CENTERED,
+            ALIGNED=True,
+        )
+    elif N % 8 == 0:
+        _chunk_bwd_k_owned_body(
+            Q,
+            K,
+            V,
+            B,
+            DELTA,
+            COUNT,
+            DIFF,
+            DO,
+            MX,
+            DN,
+            M,
+            DQ,
+            DK,
+            DV,
+            DB,
+            tl.multiple_of(N, 8),
+            H,
+            D,
+            BJ,
+            BK,
+            I_START,
+            CHUNK_I,
+            CENTERED,
+            ALIGNED=False,
+        )
+    else:
+        _chunk_bwd_k_owned_body(
+            Q,
+            K,
+            V,
+            B,
+            DELTA,
+            COUNT,
+            DIFF,
+            DO,
+            MX,
+            DN,
+            M,
+            DQ,
+            DK,
+            DV,
+            DB,
+            N,
+            H,
+            D,
+            BJ,
+            BK,
+            I_START,
+            CHUNK_I,
+            CENTERED,
+            ALIGNED=False,
+        )
+
+
+@triton.jit(do_not_specialize=["N", "C", "I_START", "COUNT"])
 def _flush_dq(
     W,
     DQ,
-    N: tl.constexpr,
+    N: tl.int64,
     D: tl.constexpr,
-    C: tl.constexpr,
-    I_START,
-    COUNT: tl.constexpr,
+    C: tl.int64,
+    I_START: tl.int64,
+    COUNT: tl.int64,
     BLOCK: tl.constexpr,
 ):
     bh = tl.program_id(1).to(tl.int64)
-    x = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    valid = x < COUNT * N * D
+    x = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    valid = x < COUNT.to(tl.int64) * N * D
     value = tl.load(W + bh * C * N * D + x, valid, 0)
     tl.store(DQ + (bh * N + I_START) * N * D + x, value, valid)
 
@@ -161,7 +265,7 @@ def fused_backward(
     q, k, v, b, o, mx, dn, mask = [
         x.contiguous() for x in (q, k, v, b, o, mx, dn, mask)
     ]
-    do = do.reshape(bs * h, n, n, d)
+    do = _prepare_do(do, bs, h, n, d)
     delta = torch.empty((bs * h, n, n), device=q.device, dtype=torch.float32)
     count = torch.empty((bs * h, n), device=q.device, dtype=torch.int32)
     difference = torch.empty((bs * h, n, d), device=q.device, dtype=torch.float32)
@@ -178,7 +282,6 @@ def fused_backward(
         d,
         bj,
         bk,
-        *do.stride(),
         num_warps=4,
         num_stages=1,
     )
@@ -213,7 +316,6 @@ def fused_backward(
             bk,
             start,
             c,
-            *do.stride(),
             CENTERED=centered_stats,
             num_warps=warps,
             num_stages=stages,

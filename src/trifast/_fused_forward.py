@@ -1,11 +1,8 @@
-"""Online-softmax forward with shape/stride specialization and fully written outputs.
+"""Online-softmax forward with runtime N/strides and fully written outputs.
 
-The baseline forward already fuses QK, bias/masking, softmax and PV. This copy
-preserves that algorithm, adds a measured 64x64 tile configuration, and fixes
-scalar promotion in Inductor and padding loads. The original baseline stays unchanged.
+The tile depends only on dtype, and D remains a compilation parameter.
+Changing N does not request a new Triton specialization or autotune search.
 """
-
-import math
 
 import torch
 import triton
@@ -13,44 +10,97 @@ import triton.language as tl
 from einops import rearrange
 from torch.library import triton_op, wrap_triton
 
-from trifast.autotune import autotune
 from trifast.torch import MASK_FILL
 
-# This pointer kernel has its own measured candidates. Upstream TMA configs
-# carry descriptor hooks and register caps that do not belong to this kernel.
-_optimized_configs = [
-    triton.Config({"BLOCK_J": 64, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-    triton.Config({"BLOCK_J": 32, "BLOCK_K": 32}, num_warps=4, num_stages=3),
-    triton.Config({"BLOCK_J": 128, "BLOCK_K": 32}, num_warps=8, num_stages=1),
-    triton.Config({"BLOCK_J": 64, "BLOCK_K": 64}, num_warps=4, num_stages=3),
-]
 
-
+# N is a runtime i64 scalar; its alignment and value-one cases do not
+# specialize. Dense strides are derived from N and DIM inside the kernel.
 # fmt: off
-@autotune(
-    configs=_optimized_configs,
-    # Equal power-of-two buckets can have different tail costs (e.g. 768/800).
-    # Including N also gives old persisted bucket-only entries a distinct key.
-    key=["H", "DIM", "CLOSEST_N", "N"],
-)
 @triton.jit
+def _fwd_kv_block(q_block, kt_ptrs, b_ptrs, mask_ptrs, v_ptrs,
+                  mask_j, k_idxs, start_k, N, scores_max, sm_denom, acc,
+                  shift, centered_sentinel, neg_inf2, scale_fp32,
+                  CENTERED: tl.constexpr, K_MASKED: tl.constexpr,
+                  BLOCK_K: tl.constexpr):
+    input_dtype: tl.constexpr = q_block.dtype
+    inv_ln2: tl.constexpr = 1.4426950408889634
+    if K_MASKED:
+        mask_k = k_idxs + start_k < N
+    else:
+        mask_k = tl.full((BLOCK_K,), True, tl.int1)
+    in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
+
+    kt_block = tl.load(kt_ptrs, mask_k[None, :], other=0)  # [d,k]
+    b_block = tl.load(b_ptrs, in_range, other=0).to(tl.float32)  # [j,k]
+    m_block = tl.load(mask_ptrs, mask_k, other=1, cache_modifier=".cg") != 0 # [k]
+
+    scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
+    if CENTERED:
+        scores = scores * scale_fp32 + (b_block - shift[:, None])
+    else:
+        scores = scores * scale_fp32 + b_block
+    scores *= inv_ln2 # 1.0 / ln(2), [j,k]
+    # Real masked keys keep the finite replacement score. Padding keys
+    # must never affect the maximum, even when all true scores < MASK_FILL.
+    if CENTERED:
+        scores = tl.where(m_block[None, :], centered_sentinel[:, None], scores)
+    else:
+        scores = tl.where(m_block[None, :], neg_inf2, scores)
+    scores = tl.where(in_range, scores, -float("inf"))
+
+    # Iterative softmax
+    block_max = tl.maximum(scores_max, tl.max(scores, 1))  # [j]
+    block_max = tl.where(mask_j, block_max, 0.)
+    exp_scores = tl.math.exp2(scores - block_max[:, None])  # [j,k]
+    # Keep padding probabilities explicitly zero. Finite sentinel scores
+    # belong only to real masked keys, including fully masked rows.
+    exp_scores = tl.where(in_range, exp_scores, 0.0)
+
+    exp_scale = tl.where(mask_j, tl.math.exp2(scores_max - block_max), 0.)  # [j]
+
+    sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, 1)  # [j]
+
+    acc = acc * exp_scale[:, None]  # [j,d]
+    v_block = tl.load(v_ptrs, mask_k[:, None], other=0)  # [k,d]
+    exp_scores = exp_scores.to(input_dtype)  # [j,k]
+
+    acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
+
+    scores_max = block_max
+
+    return scores_max, sm_denom, acc
+
+
+@triton.jit(do_not_specialize=["N"])
 def _fwd_fused_optimized(
-    o_ptr, stride_oh: tl.constexpr, stride_om: tl.constexpr, stride_on: tl.constexpr, stride_od: tl.constexpr,
-    # lse/mx/dn are allocated side by side in torch.py -- same shape, dtype and layout
-    # -- so one set of strides serves all three.
-    lse_ptr, mx_ptr, dn_ptr, stride_lh: tl.constexpr, stride_lm: tl.constexpr, stride_ln: tl.constexpr,
-    q_ptr, stride_qh: tl.constexpr, stride_qm: tl.constexpr, stride_qn: tl.constexpr, stride_qd: tl.constexpr,
-    k_ptr, stride_kh: tl.constexpr, stride_km: tl.constexpr, stride_kn: tl.constexpr, stride_kd: tl.constexpr,
-    v_ptr, stride_vh: tl.constexpr, stride_vm: tl.constexpr, stride_vn: tl.constexpr, stride_vd: tl.constexpr,
-    b_ptr, stride_bh: tl.constexpr, stride_bm: tl.constexpr, stride_bn: tl.constexpr,
-    mask_ptr, stride_maskh: tl.constexpr, stride_maskm: tl.constexpr, stride_maskn: tl.constexpr,
-    sm_scale: tl.constexpr,
-    neg_inf: tl.constexpr,
-    N: tl.constexpr, H: tl.constexpr, DIM: tl.constexpr,
-    CLOSEST_N: tl.constexpr,
+    o_ptr, lse_ptr, mx_ptr, dn_ptr, q_ptr, k_ptr, v_ptr, b_ptr, mask_ptr,
+    sm_scale: tl.constexpr, neg_inf: tl.constexpr,
+    N: tl.int64, H: tl.constexpr, DIM: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
     CENTERED: tl.constexpr = False,
 ):
+    # The wrapper materializes dense layouts. Derive their canonical strides
+    # here so contiguous channel/key axes stay visible to vectorization.
+    # Size-one axes only index zero, so canonicalizing their strides is exact.
+    stride_qh = N.to(tl.int64) * N * DIM
+    stride_qm = N.to(tl.int64) * DIM
+    stride_qn: tl.constexpr = DIM
+    stride_qd: tl.constexpr = 1
+    stride_kh, stride_km = stride_qh, stride_qm
+    stride_kn: tl.constexpr = DIM
+    stride_kd: tl.constexpr = 1
+    stride_vh, stride_vm = stride_qh, stride_qm
+    stride_vn: tl.constexpr = DIM
+    stride_vd: tl.constexpr = 1
+    stride_oh, stride_om = stride_qh, stride_qm
+    stride_on: tl.constexpr = DIM
+    stride_od: tl.constexpr = 1
+    stride_lh, stride_lm = N.to(tl.int64) * N, N.to(tl.int64)
+    stride_ln: tl.constexpr = 1
+    stride_bh, stride_bm = N.to(tl.int64) * N, N.to(tl.int64)
+    stride_bn: tl.constexpr = 1
+    stride_maskh, stride_maskm = N.to(tl.int64) * N, N.to(tl.int64)
+    stride_maskn: tl.constexpr = 1
     input_dtype = q_ptr.dtype.element_ty
     # Inductor can lower Python float arguments as fp64. Keep the entire
     # online softmax and its dot accumulator in fp32 in eager and compiled mode.
@@ -108,10 +158,7 @@ def _fwd_fused_optimized(
     sm_denom = tl.full([BLOCK_J], value=0, dtype=tl.float32)
     acc = tl.full([BLOCK_J, DIM], value=0, dtype=tl.float32)
 
-    if N % BLOCK_J == 0:
-        mask_j = tl.full((BLOCK_J,), True, tl.int1)
-    else:
-        mask_j = j_idxs < N
+    mask_j = j_idxs < N
 
     q_block = tl.load(q_ptrs, mask_j[:, None], other=0)  # [j,d]
     if CENTERED:
@@ -121,57 +168,26 @@ def _fwd_fused_optimized(
         shift = tl.load(base_b_ptr + j_idxs * stride_bm, mask_j, other=0).to(tl.float32)
         centered_sentinel = (sentinel_fp32 - shift) * inv_ln2
 
-    for start_k in tl.range(0, N, BLOCK_K):
-        start_k = tl.multiple_of(start_k, BLOCK_K)
-        if N % BLOCK_K == 0:
-            mask_k = tl.full((BLOCK_K,), True, tl.int1)
-        else:
-            mask_k = (k_idxs + start_k) < N
-        in_range = mask_j[:, None] & mask_k[None, :] # [j,k]
-
-        kt_block = tl.load(kt_ptrs, mask_k[None, :], other=0)  # [d,k]
-        b_block = tl.load(b_ptrs, in_range, other=0).to(tl.float32)  # [j,k]
-        m_block = tl.load(mask_ptrs, mask_k, other=1, cache_modifier=".cg") != 0 # [k]
-
-        scores = tl.dot(q_block, kt_block, input_precision="ieee")  # [j,k]
-        if CENTERED:
-            scores = scores * scale_fp32 + (b_block - shift[:, None])
-        else:
-            scores = scores * scale_fp32 + b_block
-        scores *= inv_ln2 # 1.0 / ln(2), [j,k]
-        # Real masked keys keep the finite replacement score. Padding keys
-        # must never affect the maximum, even when all true scores < MASK_FILL.
-        if CENTERED:
-            scores = tl.where(m_block[None, :], centered_sentinel[:, None], scores)
-        else:
-            scores = tl.where(m_block[None, :], neg_inf2, scores)
-        scores = tl.where(in_range, scores, -float("inf"))
-
-        # Iterative softmax
-        block_max = tl.maximum(scores_max, tl.max(scores, 1))  # [j]
-        exp_scores = tl.math.exp2(scores - block_max[:, None])  # [j,k]
-        # Keep padding probabilities explicitly zero. Finite sentinel scores
-        # belong only to real masked keys, including fully masked rows.
-        exp_scores = tl.where(mask_k[None, :], exp_scores, 0.0)
-
-        exp_scale = tl.math.exp2(scores_max - block_max)  # [j]
-
-        sm_denom = sm_denom * exp_scale + tl.sum(exp_scores, 1)  # [j]
-
-        acc = acc * exp_scale[:, None]  # [j,d]
-        v_block = tl.load(v_ptrs, mask_k[:, None], other=0)  # [k,d]
-        exp_scores = exp_scores.to(input_dtype)  # [j,k]
-
-        acc = tl.dot(exp_scores, v_block, acc, input_precision="ieee")  # [j,d]
-
-        scores_max = block_max
-
-        # Advance to next block along the k dimension.
+    if not CENTERED:
+        shift = tl.full((BLOCK_J,), 0., tl.float32)
+        centered_sentinel = tl.full((BLOCK_J,), 0., tl.float32)
+    full_end = (N // BLOCK_K) * BLOCK_K
+    for start_k in tl.range(0, full_end, BLOCK_K):
+        scores_max, sm_denom, acc = _fwd_kv_block(
+            q_block, kt_ptrs, b_ptrs, mask_ptrs, v_ptrs,
+            mask_j, k_idxs, start_k, N, scores_max, sm_denom, acc,
+            shift, centered_sentinel, neg_inf2, scale_fp32,
+            CENTERED, False, BLOCK_K)
         kt_ptrs += BLOCK_K * stride_kn
         v_ptrs += BLOCK_K * stride_vn
         b_ptrs += BLOCK_K * stride_bn
         mask_ptrs += BLOCK_K * stride_maskn
-
+    if full_end < N:
+        scores_max, sm_denom, acc = _fwd_kv_block(
+            q_block, kt_ptrs, b_ptrs, mask_ptrs, v_ptrs,
+            mask_j, k_idxs, full_end, N, scores_max, sm_denom, acc,
+            shift, centered_sentinel, neg_inf2, scale_fp32,
+            CENTERED, True, BLOCK_K)
 
     normalize = acc / sm_denom[:, None]
     final_output = normalize.to(input_dtype)
@@ -201,6 +217,8 @@ def _fwd_fused_optimized(
         lse += shift
 
     tl.store(lse_ptrs, lse, mask=mask_j)
+
+
 # fmt: on
 
 
@@ -245,20 +263,16 @@ def fused_forward_optimized(
     lse = torch.empty((bh, n, n), device=q.device, dtype=torch.float32)
     mx, dn = torch.empty_like(lse), torch.empty_like(lse)
 
-    CLOSEST_N = 2 ** math.ceil(math.log2(n))
+    # Fixed per-dtype tile, independent of N. IEEE FP32 uses smaller tiles
+    # and one pipeline stage to bound shared-memory use at D=128.
+    block_j, block_k, stages = (32, 32, 1) if q.dtype == torch.float32 else (64, 32, 3)
 
     # fmt: off
     wrap_triton(_fwd_fused_optimized)[grid](
-        o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-        lse, mx, dn, lse.stride(0), lse.stride(1), lse.stride(2),
-        q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-        k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-        v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-        b, b.stride(0), b.stride(1), b.stride(2),
-        mask, mask.stride(0), mask.stride(1), mask.stride(2),
+        o, lse, mx, dn, q, k, v, b, mask,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
-        CLOSEST_N=CLOSEST_N,
+        BLOCK_J=block_j, BLOCK_K=block_k, num_warps=4, num_stages=stages,
         CENTERED=(q.dtype == torch.float32),
     )
 
