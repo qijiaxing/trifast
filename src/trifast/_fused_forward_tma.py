@@ -507,7 +507,9 @@ def fused_forward_tma(
         bias_alignment = 16 // b.element_size()
         padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
         padded_b = b
-        if padded_n != n:
+        # A dense view can still have a misaligned storage offset. TMA needs
+        # an aligned base as well as pitch; pad(0, 0) provides a fresh buffer.
+        if padded_n != n or b.data_ptr() % 16 != 0:
             padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
         # The block_shape is a placeholder; _fwd_descriptor_pre_hook rewrites it
         # to [BLOCK_J, BLOCK_K] of the selected autotune config.
