@@ -145,7 +145,9 @@ def keys(inv):
 
 
 TARGET_ROLES = {
-    "_fwd_fused_optimized" if a.dtype == "fp32" else "_fused_tma",
+    "_fwd_fused_optimized"
+    if a.dtype == "fp32" or torch.cuda.get_device_capability()[0] < 9
+    else "_fused_tma",
     "_preprocess",
     "_fused_bwd_k_owned" if a.chunk_i == 0 else "_chunk_bwd_k_owned",
 }

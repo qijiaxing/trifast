@@ -158,7 +158,7 @@ def _tma_kv_block(
     configs=_fwd_configs,
     key=["H", "DIM", "CLOSEST_N"],
     prune_configs_by={"early_config_prune": prune_fwd_configs},
-    cache_name="fused_tma_runtime_bucket_v2",
+    cache_name="fused_tma_runtime_bucket_vector_store_v3",
 )
 @triton.jit(do_not_specialize=_RUNTIME_ARGS)
 def _fused_tma(
@@ -172,7 +172,7 @@ def _fused_tma(
     b_ptr, stride_bh: tl.int64, stride_bm: tl.int64, stride_bn: tl.constexpr,
     mask_ptr, stride_maskh: tl.int64, stride_maskm: tl.int64, stride_maskn: tl.constexpr,
     desc_b,
-    desc_q, desc_k, desc_v, desc_o,
+    desc_q, desc_k, desc_v,
     # Widened mask, flattened to [batch * N, padded_n]; `mask_ptr` above stays for
     # the pointer fallback. Built in trifast.torch._triangle_attention.
     desc_mask,
@@ -241,7 +241,7 @@ def _fused_tma(
     base_mask_ptr = mask_ptr + (mask_start_h * stride_maskh)
     mask_ptrs= base_mask_ptr + (start_i * stride_maskm) + (k_idxs * stride_maskn) # [k]
 
-    base_o_ptr = o_ptr + (start_h * stride_oh) + (start_i * stride_om)
+    base_o_ptr = o_ptr + ((start_h * N + start_i) * N * DIM)
     o_ptrs = base_o_ptr + (j_idxs[:, None] * stride_on) + (d_idxs[None, :] * stride_od) # [j,d]
 
     scores_max = tl.full([BLOCK_J], value=-float("inf"), dtype=tl.float32) # [j]
@@ -300,13 +300,9 @@ def _fused_tma(
 
     normalize = acc / sm_denom[:, None]
     final_output = normalize.to(input_dtype)
-    if USE_TMA:
-        desc_o.store(
-            [start_h.to(tl.int32), start_i.to(tl.int32), start_j.to(tl.int32), 0],
-            final_output.reshape(1, 1, BLOCK_J, DIM),
-        )
-    else:
-        tl.store(o_ptrs, final_output, mask=mask_j[:, None])
+    # A regular vector store keeps output initialization visible to initcheck.
+    # TMA reads retain the upstream data-movement optimization.
+    tl.store(o_ptrs, final_output, mask=mask_j[:, None])
 
     # Backward reconstructs probabilities as exp2(scores - mx) / dn.
     tl.store(mx_ptrs, scores_max, mask=mask_j)
@@ -320,7 +316,7 @@ _fused_tma_pointer = autotune(
     configs=_fwd_pointer_configs,
     key=["H", "DIM", "CLOSEST_N"],
     prune_configs_by={"early_config_prune": prune_fwd_configs},
-    cache_name="fused_tma_pointer_runtime_bucket_v2",
+    cache_name="fused_tma_pointer_runtime_bucket_vector_store_v3",
 )(_fused_tma.fn)
 
 
@@ -432,7 +428,7 @@ def fused_forward_tma(
     can_use_tma_bias = (
         USE_TMA_BIAS and descriptor_coords_safe and dim <= 64 and not _is_fake(b)
     )
-    # Fake tensors cannot build a tensormap, as for q/k/v/o above. Nothing else is
+    # Fake tensors cannot build a tensormap, as for q/k/v above. Nothing else is
     # needed: the flat [batch * n, padded_n] view built below addresses rows as
     # `batch * N + i`, which requires the mask to really be n x n, but the
     # torch._check calls at the top of this function already guarantee that
@@ -493,9 +489,8 @@ def fused_forward_tma(
         desc_q = TensorDescriptor.from_tensor(q, block_shape=[1, 1, 64, 32])
         desc_k = TensorDescriptor.from_tensor(k, block_shape=[1, 1, 64, 32])
         desc_v = TensorDescriptor.from_tensor(v, block_shape=[1, 1, 64, 32])
-        desc_o = TensorDescriptor.from_tensor(o, block_shape=[1, 1, 64, 32])
     else:
-        desc_q, desc_k, desc_v, desc_o = q, k, v, o
+        desc_q, desc_k, desc_v = q, k, v
 
     def grid(x):
         return (triton.cdiv(n, x["BLOCK_J"]), n, bh)
@@ -525,7 +520,7 @@ def fused_forward_tma(
         b, b.stride(0), b.stride(1), b.stride(2),
         mask, mask.stride(0), mask.stride(1), mask.stride(2),
         desc_b,
-        desc_q, desc_k, desc_v, desc_o,
+        desc_q, desc_k, desc_v,
         desc_mask,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
