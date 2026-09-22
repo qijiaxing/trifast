@@ -10,6 +10,7 @@ import torch
 from trifast._fused_backward import fused_backward as _full_backward
 from trifast._fused_chunked import fused_backward as _chunked_backward
 from trifast._fused_forward import fused_forward_optimized
+from trifast._fused_forward_tma import fused_forward_tma
 
 
 @torch.library.custom_op("trifast::fused_dispatch_forward", mutates_args=())
@@ -21,6 +22,8 @@ def fused_forward_dispatch(
     mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return output and matching finite-mask normalization statistics."""
+    if q.dtype != torch.float32 and torch.cuda.get_device_capability(q.device)[0] >= 9:
+        return fused_forward_tma(q, k, v, bias, mask)
     return fused_forward_optimized(q, k, v, bias, mask)
 
 

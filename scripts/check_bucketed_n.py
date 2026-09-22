@@ -61,6 +61,7 @@ from triton.runtime.jit import (
 import trifast._fused_backward as backward_module
 import trifast._fused_chunked as chunk_module
 import trifast._fused_forward as forward_module
+import trifast._fused_forward_tma as tma_module
 from trifast import (
     triangle_attention_fused,
 )
@@ -102,7 +103,7 @@ else:
 
 def inventory():
     result = {}
-    for module in (forward_module, backward_module, chunk_module):
+    for module in (forward_module, tma_module, backward_module, chunk_module):
         for name, obj in vars(module).items():
             # Some versions expose an autotuner around the actual JITFunction.
             seen = set()
@@ -144,7 +145,7 @@ def keys(inv):
 
 
 TARGET_ROLES = {
-    "_fwd_fused_optimized",
+    "_fwd_fused_optimized" if a.dtype == "fp32" else "_fused_tma",
     "_preprocess",
     "_fused_bwd_k_owned" if a.chunk_i == 0 else "_chunk_bwd_k_owned",
 }
