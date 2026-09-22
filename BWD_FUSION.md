@@ -166,6 +166,39 @@ Raising occupancy is the only lever, and this kernel does not have the registers
 
 ## Things that look right and are not
 
+- **Folding the softmax denominator into the exponent.** `exp2(sᵀ - mx) / dn` becomes
+  `exp2(sᵀ - (mx + log2(dn)))`, which is algebraically identical, is the standard LSE form,
+  and deletes an fp32 division from every one of the `bh·n³` score elements. It is
+  **numerically wrong here**, and the reason is the masking sentinel. On a fully-masked row
+  every score *is* the sentinel, so `sᵀ - mx` cancels to exactly zero; perturbing `mx` by
+  `log2(dn)` turns that into a subtraction of two values near 14427 — the sentinel in log2
+  units — whose fp32 ulp is ~1e-3, i.e. ~1.5e-4 relative error in the exponent. Measured:
+  `dv` off by 3.9e-5 and 5.1e-5 relative at n=100 and n=17, fp32, fully-masked rows, against
+  a 1e-5 tolerance. Invisible in bf16, two test failures in fp32. The denominator has to
+  stay outside the exponent.
+  Separately, don't compute the `log2` in the j loop even if you find a safe formulation:
+  `tl.math.log2` is libdevice's precise polynomial, not `lg2.approx`, and it added 192
+  `mul.f32` to the PTX for the 128 `div.full.f32` it removed.
+- **Hoisting the reciprocal instead.** `inv = 1.0 / dn` on the `[j]` vector, then a
+  broadcast multiply, keeps `sᵀ - mx` exact and still moves the division off the per-element
+  path. It is a **wash**, because ptxas already did the important half: at pinned
+  64×64/w4/s3, `MUFU` is 193 → 193 and `FSETP` 128 → 128, i.e. the `MUFU.RCP` was already
+  CSE'd to `[j]` granularity. The explicit version only trades 128 `FMUL` for 64 `FSEL` and
+  grows the spill stack 16 → 32 B. What is left per element is one `FMUL` plus one range
+  check either way, ~1.3 % of stalls — the floor, not an opportunity.
+- **TMA `desc.atomic_add` for db.** This one has the mechanism exactly right and still
+  loses. It does what it promises: `async_tma_reduce` takes the `#mma` tile straight from
+  shared memory, so `ttg.convert_layout #mma -> #blocked` disappears, `REDG` goes 48 → 32
+  and `IMAD` 503 → 418 — removing the register marshalling that is the db atomic's single
+  largest cost. And it is **1.27 ms slower** (35.94 vs 34.67 at 64×64/s3, +3.7 %).
+  The reason is one line of TTGIR: `async_tma_reduce` is followed by
+  `ttng.async_tma_store_wait {pendings = 0}`, a full drain of the TMA store pipe every
+  iteration, because the staging buffer is reused. A pointer `REDG` returns nothing and is
+  fire-and-forget. On a kernel that is already ~28 % barrier and WARPGROUP sync, a new hard
+  sync point costs more than the marshalling it saves — plus 7.7 KB of shared memory and
+  4 → 8 spills. Note the earlier standalone micro-benchmark called TMA reduce "dead even";
+  standalone there is neither a layout conversion to save *nor* surrounding work to
+  serialise against, so it could not have predicted either direction.
 - **dq in the transposed orientation.** `dqᵀ[d,j] = dot(trans(k), dsᵀ)` avoids the one
   remaining accumulator transpose, so it looks strictly better. Its M is DIM, and M < 64 is
   not selected for wgmma: at DIM=32 it demotes to `mma.sync` and costs 5.3 ms. At DIM=64 it
