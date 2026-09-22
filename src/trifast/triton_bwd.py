@@ -5,8 +5,8 @@ recompute `scores = q·k^T * sm_scale + bias` and `dp = do·v^T`, rebuild `p` fr
 `(mx, dn)` and rebuild `ds` -- nine matmuls and three softmax epilogues where five and
 one would do. `_bwd_fused` does all four gradients in one pass.
 
-Two structural choices carry the speedup, both measured on an H20-3e at
-n=1024, h=8, d=32, bf16:
+Four choices carry the speedup -- two structural (1, 2) and two about how the bias tile
+reaches the kernel (3, 4). All measured on an H20-3e at n=1024, h=8, d=32, bf16:
 
 1. **Every score tile is computed transposed, as `[k, j]`.** dV needs `p^T` and dK needs
    `ds^T`; in the `[j, k]` orientation those are `tl.trans` of a *computed fp32
@@ -132,7 +132,7 @@ def _bwd_bias_prep(
 
     A tiled transpose, `[BLOCK, BLOCK]` per program: both the read and the write stay
     coalesced along their own contiguous axis. Bandwidth bound and tiny -- 16 MB read plus
-    33 MB written at n=1024, against a ~40 ms kernel.
+    33 MB written at n=1024, against a ~35 ms kernel.
 
     Only the valid `j < N` region is written; the caller allocates `b2t` with
     `torch.zeros` so the `[N, PADDED_N)` columns stay zero. That padding exists for

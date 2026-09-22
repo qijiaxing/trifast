@@ -62,8 +62,10 @@ which the fused kernel is 34.7 ms, the delta preprocess 0.26, the dq cast plus d
 tile that still pays for masking.
 
 **Why 1.54x and not the 1.8x that 9 → 5 matmuls implies.** (This section predates the fp32
-bias change, which took the ratio to 1.67x; the accounting below still explains where the
-remaining gap comes from.) The three kernels together
+bias change and its TMA read, which together took the ratio to 1.73x — past the 1.57x this
+accounting predicted, because it treated the per-matmul efficiency gap as all atomics and
+register pressure when a third of it was the bias widening. The shape of the argument still
+holds; the 12.5 % figure does not.) The three kernels together
 sustain 79.2 TFLOP/s over the 9 matmuls they actually perform — which is where the table's
 43.99 comes from, `79.2 × 5/9` — while the fused kernel sustains 69.1 over its 5. That
 12.5 % lower per-matmul efficiency is the atomics (additive, see below) and the register
@@ -84,6 +86,9 @@ warp-cycles per issued instruction. The cause was two lines,
 **computed fp32 accumulators**.
 
 ## The two structural changes
+
+(The bias tile is a third and a fourth; it has
+[its own section](#the-bias-tile-and-why-the-first-read-of-this-profile-was-wrong).)
 
 **1. Every score tile is computed transposed, as `[k, j]`.** dV needs `pᵀ` and dK needs
 `dsᵀ`. In the `[j, k]` orientation those are transposes of an MMA accumulator, which lower
@@ -244,6 +249,61 @@ l1tex__t_sectors_pipe_lsu_mem_global_op_red.sum  1,610,612,736   -> 51.5 GB of L
 is 51.5 GB with **zero** amplification — perfectly coalesced, entirely L2-resident. Nothing
 to win on the addressing side; the only lever is issuing more warps so it overlaps.
 
+### The same sections after the bias change
+
+Both columns are the 8-section collection above, same command, idle GPU.
+
+| | before | after |
+| --- | --- | --- |
+| Duration (clock-locked) | 44.10 ms | **37.74 ms** |
+| Executed instructions | 7.730e9 | **6.671e9** |
+| Compute (SM) throughput | 47.4 % | 55.4 % |
+| Memory throughput (= L1/TEX) | 55.1 % | **67.2 %** |
+| DRAM throughput | 2.6 % | 3.1 % |
+| L2 hit rate | 95.6 % | 96.1 % |
+| Issue slots busy | 34.1 % | 34.4 % |
+| Warp cycles / issued inst | 5.84 | 5.79 |
+| Registers / thread | 255 | 255 |
+| Achieved occupancy | 12.46 % | 12.46 % |
+| Active / eligible warps per sched | 1.99 / 0.45 | 1.99 / 0.46 |
+| Block limit (registers / smem) | 2 / 3 | 2 / **2** |
+| Dynamic shared memory | 41.98 KB | 83.97 KB |
+
+Stall reasons, in cycles per issued instruction:
+
+| | before | after |
+| --- | --- | --- |
+| barrier | 1.31 | 1.20 |
+| **long_scoreboard** | 1.14 | **0.67** |
+| selected (i.e. useful issue) | 1.00 | 1.00 |
+| short_scoreboard | 0.79 | 0.90 |
+| **mio_throttle** | 0.40 | **0.79** |
+| wait | 0.60 | 0.61 |
+| not_selected | 0.32 | 0.34 |
+
+**Occupancy, registers and eligible warps are all unchanged.** The 14 % came from executing
+14 % fewer instructions, not from hiding latency better — which is what the change claimed
+and is worth having confirmed rather than assumed. `long_scoreboard` fell 41 %: the bias
+load left the critical path, TMA being async. It was paid for in MIO pressure —
+`mio_throttle` doubled and `short_scoreboard` rose — which is the `LDS` increase showing up
+as a stall reason rather than only as an instruction count.
+
+**`Block Limit Shared Mem` dropped 3 → 2, so shared memory now co-binds with registers.**
+Before the change registers alone capped occupancy and 42 KB of 233 KB was idle; at 84 KB
+both limits are 2 CTAs/SM. Nothing is lost today, but shared memory has stopped being free,
+which matters for the two remaining leads that want to spend it (`num_stages=4`, and the
+smem accumulator bank in lead 5).
+
+**Two traps when re-profiling this kernel.** ncu's multi-pass replay makes autotune trial
+timings meaningless, so a **cold** autotune cache under ncu can select the wrong config:
+one 20-pass run here profiled `num_stages=2` (41.06 ms, 58.37 KB) instead of the shipping
+`3` (37.74 ms, 83.97 KB), and five repeats with a warm cache all gave `3`. Warm the cache
+with `scripts/bench_kernels.py` first and check `Dynamic Shared Memory Per Block` identifies
+the config you meant to measure. And at `num_stages=3` ptxas reorders hard enough that
+**line-level attribution smears** — 48.6 % of samples land on the softmax line and 24.5 % on
+the loop header, where the scheduler parks its waits rather than where the work is. Compare
+opcodes, not lines.
+
 ## The bias tile, and why the first read of this profile was wrong
 
 Everything above this section was derived from `--set full` section summaries. Those say
@@ -340,13 +400,11 @@ Three implementation traps, all of which bite silently:
    no config pre-hook runs at all. `scripts/proto_bwd_fused.py` has the same problem for
    the same reason and sets the box by hand.
 
-Two notes for whoever profiles this next. At `num_stages=3` ptxas reorders hard enough that
-**line-level attribution smears** — 48.6 % of samples land on the softmax line and 24.5 % on
-the loop header, which is where the scheduler parks its waits, not where the work is. Compare
-opcodes, not lines. And the db atomic's 12.73 % is **`IMAD.MOV.U32`, not memory**: 201 M
-register moves, because `REDG.ADD.F32.128` wants data and address contiguous and at 255
-registers ptxas has no allocation freedom. The atomic micro-benchmark below measures the
-traffic correctly; the traffic is not the cost.
+One note on reading the table above (the profiling traps themselves are in
+[the section summaries](#the-same-sections-after-the-bias-change)). The db atomic's 12.73 %
+is **`IMAD.MOV.U32`, not memory**: 201 M register moves, because `REDG.ADD.F32.128` wants
+data and address contiguous and at 255 registers ptxas has no allocation freedom. The atomic
+micro-benchmark below measures the traffic correctly; the traffic is not the cost.
 
 ## The decomposition is at a local optimum, and there is a conservation law
 
@@ -422,10 +480,15 @@ can return. **Do not re-attempt this without first finding ~32 registers elsewhe
    independent and never overlap. The source already issues them adjacently and consumes
    them late, so there is no obvious source-level fix; this is a Triton pipelining question
    or a Gluon one.
-5. **Shared-memory accumulators are the real ceiling, and Triton cannot express them.** Shared
-   memory is less idle than it was — 71 KB of 233 KB at `num_stages=3` — but a `dk`/`dv`
-   accumulator bank in smem would make `IC=4-8` free of register cost, which is where the
-   atomics actually collapse. `allocate_shared_memory` exists in this Triton's Gluon frontend
+5. **Shared-memory accumulators are the real ceiling, and Triton cannot express them.** This
+   one got *harder*, not easier. Shared memory used to be the idle resource — 42 KB of
+   233 KB, with registers alone capping occupancy. At 84 KB it now co-binds at 2 CTAs/SM
+   (`Block Limit Shared Mem` 3 → 2), so a `dk`/`dv` accumulator bank has to fit in what is
+   left rather than in a third of the SM. It is still the lever that would make `IC=4-8`
+   free of register cost, which is where the atomics actually collapse, but the budget it
+   draws on is now shared with the bias tile — and reverting to the pointer bias to get that
+   space back costs 5.2 %.
+   `allocate_shared_memory` exists in this Triton's Gluon frontend
    (`triton/experimental/gluon/language/_core.py:487`), at the cost of hand-written layouts and
    pipelining on an experimental API. Cluster/DSMEM reduction of `db` is *not* available even
    there — Gluon's Hopper cluster surface is only `arrive`/`wait`
@@ -433,7 +496,8 @@ can return. **Do not re-attempt this without first finding ~32 registers elsewhe
 
 ## Not worth investigating
 
-- **DRAM.** The fused kernel moves ~4.3 GB at n=1024 against a 40 ms runtime.
+- **DRAM.** The fused kernel moves ~4.3 GB at n=1024 against a 35 ms runtime; DRAM
+  throughput is 3.1 % of peak.
 - **Pointer arithmetic, including the rank-2 pointer tensors.** Real 64-bit address math
   (`IMAD.WIDE`) is **0.47 %** of stall samples. The `IMAD` line in the tables above looks
   alarming at 7–13 %, but it is almost entirely `IMAD.MOV.U32` — register moves issued on

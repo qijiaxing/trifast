@@ -49,7 +49,7 @@ USE_TMA_MASK = True
 # False to fall back; both paths are exercised by scripts/bench_kernels.py, and the
 # fake-tensor path takes the pointer load regardless.
 USE_TMA_BWD_BIAS = True
-# Run the backward as one fused kernel (plus two memory-bound passes) instead of the
+# Run the backward as one fused kernel (plus three memory-bound passes) instead of the
 # three kernels in triton.py, which each recompute the score tile. Flip to False to fall
 # back to them; both paths are exercised by scripts/bench_kernels.py. The fused path
 # accumulates db and dq with atomics, so those two gradients are no longer bitwise
@@ -290,7 +290,7 @@ def triangle_attention_bwd(
 
     if USE_FUSED_BWD:
         # One kernel for all four gradients instead of three that each recompute the
-        # score tile: 41.3 ms against 62.4 at n=1024, h=8, d=32, bf16. See
+        # score tile: 35.4 ms against 62.4 at n=1024, h=8, d=32, bf16. See
         # trifast/triton_bwd.py for why every tile is transposed to [k, j] and why db
         # and dq have to be atomic.
         dk = torch.empty_like(k)

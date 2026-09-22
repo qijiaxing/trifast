@@ -48,7 +48,10 @@ column has 4 of them and the slowest has 20.
 
 `num_stages=4` is within noise of 3 (34.61 vs 34.70) and is deliberately *not* in the
 candidate list: it costs 30 % more shared memory for nothing measurable, and shared memory
-is the one budget that still has headroom for other work.
+is no longer free. At `num_stages=3` the TMA bias puts the kernel at 84 KB, which makes
+`Block Limit Shared Mem` 2 -- the same 2 CTAs/SM that registers already impose. Nothing is
+lost there, but 109 KB at `num_stages=4` would be the first config where smem, not
+registers, is what caps occupancy.
 
 Both 2 and 3 stay in the list -- 2 is the better shape at `BLOCK_J=32`, which
 `prune_bwd_fused_configs` falls back to for fp32 at DIM > 64.
