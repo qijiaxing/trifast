@@ -16,6 +16,7 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 from trifast.autotune import autotune
 from trifast.autotune_helpers import (
     _fwd_configs,
+    _fwd_descriptor_pre_hook,
     _fwd_pointer_configs,
     prune_fwd_configs,
 )
@@ -24,6 +25,40 @@ from trifast.torch import MASK_FILL
 USE_TMA = True
 USE_TMA_BIAS = True
 USE_TMA_MASK = True
+
+
+# Keep this pool independent of the upstream baseline and pointer fallback.
+# Clone the upstream pool (eight standard configs plus optional FORCE_TUNE
+# entries), preserving descriptor setup hooks.
+_fused_tma_configs = [
+    triton.Config(
+        kwargs=dict(config.kwargs),
+        num_warps=config.num_warps,
+        num_stages=config.num_stages,
+        num_ctas=config.num_ctas,
+        maxnreg=config.maxnreg,
+        pre_hook=config.pre_hook,
+    )
+    for config in _fwd_configs
+]
+_d32_register_capped_config = triton.Config(
+    {"BLOCK_J": 64, "BLOCK_K": 64},
+    num_warps=4,
+    num_stages=2,
+    maxnreg=96,
+    pre_hook=_fwd_descriptor_pre_hook,
+)
+_fused_tma_configs.append(_d32_register_capped_config)
+
+
+def _prune_fused_tma_configs(configs, named_args, **kwargs):
+    configs = prune_fwd_configs(configs, named_args, **kwargs)
+    arguments = {**named_args, **kwargs}
+    if arguments["DIM"] != 32:
+        configs = [
+            config for config in configs if config is not _d32_register_capped_config
+        ]
+    return configs
 
 _RUNTIME_ARGS = [
     "N",
@@ -155,10 +190,10 @@ def _tma_kv_block(
 
 
 @autotune(
-    configs=_fwd_configs,
+    configs=_fused_tma_configs,
     key=["H", "DIM", "CLOSEST_N"],
-    prune_configs_by={"early_config_prune": prune_fwd_configs},
-    cache_name="fused_tma_runtime_bucket_vector_store_v3",
+    prune_configs_by={"early_config_prune": _prune_fused_tma_configs},
+    cache_name="fused_tma_runtime_bucket_vector_store_v4",
 )
 @triton.jit(do_not_specialize=_RUNTIME_ARGS)
 def _fused_tma(
@@ -454,9 +489,9 @@ def fused_forward_tma(
         padded_mask_n = triton.cdiv(n, mask_alignment) * mask_alignment
         # The widened copy. Only the truth of each entry is read, so 0.0/1.0 is
         # enough. Costs n**2 * 2 B (2 MB at n=1024) and ~35 us, once per call.
-        wide_mask = torch.nn.functional.pad(
-            mask.to(MASK_TMA_DTYPE), (0, padded_mask_n - n)
-        )
+        wide_mask = mask.to(MASK_TMA_DTYPE)
+        if padded_mask_n != n:
+            wide_mask = torch.nn.functional.pad(wide_mask, (0, padded_mask_n - n))
         # Fold (batch, i) into a single row axis so the kernel can address a row as
         # `batch * N + i`. Rank-2 is load bearing: a rank-3 box over [batch, i, k]
         # gives up the whole speedup. block_shape is a placeholder that
@@ -471,7 +506,9 @@ def fused_forward_tma(
         # on hopper, tma requires 16 bytes alignment
         bias_alignment = 16 // b.element_size()
         padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
-        padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
+        padded_b = b
+        if padded_n != n:
+            padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
         # The block_shape is a placeholder; _fwd_descriptor_pre_hook rewrites it
         # to [BLOCK_J, BLOCK_K] of the selected autotune config.
         desc_b = TensorDescriptor.from_tensor(
