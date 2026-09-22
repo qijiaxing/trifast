@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "scripts/validate_fused.py",
+    "--shapes",
+    "500,512,513,800,1024"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:21:36.274588+00:00",
+  "state": "finished",
+  "timeout_seconds": 300,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:22:05.217155+00:00",
+  "wall_seconds": 28.94257242232561
+}

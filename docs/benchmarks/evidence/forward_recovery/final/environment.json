@@ -1,0 +1,16 @@
+{
+  "gpu": "NVIDIA H20-3e",
+  "compute_capability": [
+    9,
+    0
+  ],
+  "cuda": "13.3",
+  "compute_sanitizer": "2026.2.1.0 (build 38334959)",
+  "torch": "2.13.0a0+9186a08b2c.nv26.07",
+  "triton": "3.7.1",
+  "slurm_job_id": "73121",
+  "frozen_kernel_revision": "4b832de",
+  "upstream_revision": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+  "gpu_session_released": true,
+  "timing_note": "Command metadata reports wall time including compile/host work, not GPU busy time."
+}

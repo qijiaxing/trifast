@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "scripts/check_bucketed_n.py",
+    "--shapes",
+    "65,80,127,128,65,129,200,256,129,1,1",
+    "--reference-max-n",
+    "256"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T06:43:55.113329+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T06:44:57.768043+00:00",
+  "wall_seconds": 62.65472097322345
+}

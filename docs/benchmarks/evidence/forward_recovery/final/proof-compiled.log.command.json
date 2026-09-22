@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "scripts/check_bucketed_n.py",
+    "--torch-compile"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:16:15.511432+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:17:43.214160+00:00",
+  "wall_seconds": 87.70273515209556
+}

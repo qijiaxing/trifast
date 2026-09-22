@@ -1,5 +1,7 @@
 # Runtime sequence length — experimental branch
 
+> Historical frozen experiment `db7285d`: these results apply to the strict cross-length reuse implementation. See the [bucketed report](bucketed_n.md) for the current implementation.
+
 **This experimental branch has not met the performance target. Original PR #3 remains at `249f`; its shape-specialized performance results do not describe this prototype.**
 
 The fused path passes sequence length `N` at runtime. For a fixed device, dtype, head count, channel dimension and launch configuration, changing `N` reuses the attention kernels instead of selecting a new per-length Triton specialization. This is a kernel reuse contract, not a promise that every PyTorch graph compiles only once.

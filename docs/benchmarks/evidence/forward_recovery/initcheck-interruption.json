@@ -1,0 +1,7 @@
+{
+  "state": "interrupted_after_errors",
+  "original_log": "initcheck.log",
+  "reason": "100 uninitialized output-read reports; stopped for TMA/vector-store investigation",
+  "exit_code_known": false,
+  "original_metadata_note": "Parent driver interrupt left original metadata running; not a pass. Subsequent process listing confirmed no surviving sanitizer/pytest process."
+}

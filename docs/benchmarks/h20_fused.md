@@ -1,6 +1,6 @@
 # H20 fused attention measurements
 
-> Historical record: this document describes the shape-specialized `249f3e2` implementation in PR #3. It does not describe the runtime-N code or performance on this experimental branch. See the [dynamic-N report](../dynamic_n.md).
+> Historical record: this document describes the shape-specialized `249f3e2` implementation in PR #3. It does not describe the runtime-N code or performance on this experimental branch. See the [bucketed-N report](../bucketed_n.md).
 
 These measurements compare the opt-in fused implementation against upstream master **b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb**. Low-memory backward with `chunk_i=128` is the primary reported configuration. The original `triangle_attention` API remains available; these tables do not imply changing its dispatch.
 

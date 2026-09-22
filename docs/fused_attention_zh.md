@@ -1,6 +1,6 @@
 # 可选融合 Triangle Attention
 
-> 历史记录：本文描述 PR #3 的 `249f3e2` 形状特化版本，不是当前实验分支的运行时 N 版本。当前实现及重新测量见 [动态 N 报告](dynamic_n_zh.md)。
+> 历史记录：本文描述 PR #3 的 `249f3e2` 形状特化版本，不是当前实验分支的运行时 N 版本。当前实现及重新测量见 [分桶报告](bucketed_n_zh.md)。
 
 本改动基于 Jiaxing TriFast 的 `b4ecec4`，该版本已经包含 TMA 前向优化。原 `triangle_attention` 及其调参策略不变；新增融合入口默认使用 `chunk_i=128` 的低显存路径。最新基线的性能数据、逐轮采样和验证摘要见[性能报告](benchmarks/h20_fused_zh.md)。此前针对 `33b5c00` 的数字属于历史基线，不能用作相对最新 master 的加速。
 

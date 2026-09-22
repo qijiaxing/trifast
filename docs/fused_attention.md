@@ -1,6 +1,6 @@
 # Opt-in fused triangle attention
 
-> Historical record: this document describes the shape-specialized `249f3e2` implementation in PR #3. It does not describe the runtime-N code or performance on this experimental branch. See the [dynamic-N report](dynamic_n.md).
+> Historical record: this document describes the shape-specialized `249f3e2` implementation in PR #3. It does not describe the runtime-N code or performance on this experimental branch. See the [bucketed-N report](bucketed_n.md).
 
 This implementation adds an opt-in fused backward whose default uses bounded-memory chunking (`chunk_i=128`). The existing `trifast.triangle_attention` remains unchanged. On the PR base (`b4ecec4`), that existing implementation already includes its own TMA forward; the new APIs use a separate pointer-based online-softmax forward and do not replace the upstream TMA configuration or hooks.
 
