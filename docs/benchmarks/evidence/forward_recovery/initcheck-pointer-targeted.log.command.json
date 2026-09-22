@@ -1,0 +1,20 @@
+{
+  "command": [
+    "compute-sanitizer",
+    "--tool",
+    "initcheck",
+    "--error-exitcode",
+    "99",
+    "python",
+    "/workspace/experiments/forward-recovery-20260922/store_probe.py",
+    "/workspace/experiments/forward-recovery-20260922/check_store_target.py"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:10:19.161413+00:00",
+  "state": "finished",
+  "timeout_seconds": 180,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:12:37.626960+00:00",
+  "wall_seconds": 138.46555341780186
+}

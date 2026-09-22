@@ -1,0 +1,24 @@
+{
+  "base_commit": "b4ecec4c8ac599bf5aa16ae5aeb5ebdc02b7addb",
+  "note": "Benchmarked dirty working tree on this base; hashes identify the exact measured source. Command wall time includes compilation and host work, not GPU utilization. Selected final successful gates; see README for corrected earlier test-harness failures.",
+  "sha256": {
+    "scripts/bench_fused.py": "92e5d0f74278b4fd329c2d07e2651f4c39152ed9b9fa79e1696ad75b27a1a5a8",
+    "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+    "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+    "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+    "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+    "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+    "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+    "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+    "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+    "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+    "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+    "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+    "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+    "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+    "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212",
+    "tests/fused_reference.py": "7530c95dbc94d6d25e09215aa5a495f14a872f7850f83c49366d9cb2b837174d",
+    "tests/unit/test_fused.py": "61dd2a2f476e175508583ff131c608f3bf892686b0578d6c37f3e8295a935c08",
+    "tests/unit/test_fused_contracts.py": "bfd33ec97fa56d70113b5b7b9e732e8650a10ccdd6d57eb33ac64b4cfad698d2"
+  }
+}

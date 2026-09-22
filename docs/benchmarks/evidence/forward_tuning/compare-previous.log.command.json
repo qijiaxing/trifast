@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python",
+    "/workspace/experiments/forward-tuning-20260922/compare_previous.py"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:52:58.918621+00:00",
+  "state": "finished",
+  "timeout_seconds": 900,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:54:23.439321+00:00",
+  "wall_seconds": 84.52070553600788
+}

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "/workspace/experiments/forward-recovery-20260922/store_probe.py",
+    "/workspace/trifast-pr/scripts/bench_fused.py",
+    "--shapes",
+    "512,800,1024"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:12:37.694289+00:00",
+  "state": "finished",
+  "timeout_seconds": 300,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:13:18.063591+00:00",
+  "wall_seconds": 40.369310315698385
+}

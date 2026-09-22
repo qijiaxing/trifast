@@ -1,0 +1,8 @@
+................                                                         [100%]
+=============================== warnings summary ===============================
+tests/unit/test_fused_tma.py::test_padding_below_mask_sentinel[3-default-dtype0]
+  /workspace/trifast-pr/src/trifast/autotune_helpers.py:23: DeprecationWarning: support for supplying keyword arguments to pathlib.PurePath is deprecated and scheduled for removal in Python 3.14
+    config_dir = Path(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+16 passed, 1 warning in 91.68s (0:01:31)

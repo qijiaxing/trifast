@@ -1,0 +1,1254 @@
+[
+  {
+    "run": "v4-pytest-eager",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_fused.py",
+      "tests/unit/test_fused_contracts.py",
+      "-m",
+      "not compile"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:52:18.495502+00:00",
+    "end_utc": "2026-09-21T06:55:15.713263+00:00",
+    "wall_seconds": 177.21777023747563,
+    "result_lines": [
+      "374 passed, 18 deselected, 1 warning in 175.75s (0:02:55)"
+    ]
+  },
+  {
+    "run": "v4-pytest-compile",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_fused.py",
+      "-m",
+      "compile"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:55:15.783799+00:00",
+    "end_utc": "2026-09-21T06:55:33.803184+00:00",
+    "wall_seconds": 18.019394885748625,
+    "result_lines": [
+      "18 passed, 331 deselected, 15 warnings in 15.85s"
+    ]
+  },
+  {
+    "run": "v4-pytest-compile-cold",
+    "command": [
+      "env",
+      "XDG_CONFIG_HOME=/tmp/trifast-pr-v4-cold",
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_fused.py",
+      "-m",
+      "compile"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:04:25.271371+00:00",
+    "end_utc": "2026-09-21T07:04:43.158475+00:00",
+    "wall_seconds": 17.887111239135265,
+    "result_lines": [
+      "18 passed, 331 deselected, 15 warnings in 15.73s"
+    ]
+  },
+  {
+    "run": "v4-pytest-memcheck",
+    "command": [
+      "compute-sanitizer",
+      "--tool",
+      "memcheck",
+      "--error-exitcode",
+      "99",
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_fused.py",
+      "-m",
+      "sanitizer"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:58:53.057819+00:00",
+    "end_utc": "2026-09-21T07:00:03.838628+00:00",
+    "wall_seconds": 70.78081643208861,
+    "result_lines": [
+      "5 passed, 344 deselected, 1 warning in 69.33s (0:01:09)",
+      "========= ERROR SUMMARY: 0 errors"
+    ]
+  },
+  {
+    "run": "v4-pytest-initcheck",
+    "command": [
+      "compute-sanitizer",
+      "--tool",
+      "initcheck",
+      "--error-exitcode",
+      "99",
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_fused.py",
+      "-m",
+      "sanitizer"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:00:03.911362+00:00",
+    "end_utc": "2026-09-21T07:00:35.021209+00:00",
+    "wall_seconds": 31.10985541343689,
+    "result_lines": [
+      "5 passed, 344 deselected, 1 warning in 29.68s",
+      "========= ERROR SUMMARY: 0 errors"
+    ]
+  },
+  {
+    "run": "v4-pytest-upstream-smoke",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/unit/test_trifast.py",
+      "-k",
+      "fully_masked_row_semantics or weight_updates"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:04:43.229725+00:00",
+    "end_utc": "2026-09-21T07:04:50.130676+00:00",
+    "wall_seconds": 6.900961060076952,
+    "result_lines": [
+      "7 passed, 9004 deselected, 1 warning in 5.45s"
+    ]
+  },
+  {
+    "run": "v4-lint",
+    "command": [
+      "python",
+      "-m",
+      "ruff",
+      "check",
+      "src/trifast/_fused_backward.py",
+      "src/trifast/_fused_chunked.py",
+      "src/trifast/_fused_forward.py",
+      "src/trifast/fused_api.py",
+      "src/trifast/fused_low_memory_api.py",
+      "tests/fused_reference.py",
+      "tests/unit/test_fused.py",
+      "tests/unit/test_fused_contracts.py",
+      "scripts/bench_fused.py",
+      "scripts/validate_fused.py"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:51:50.656278+00:00",
+    "end_utc": "2026-09-21T06:51:50.732172+00:00",
+    "wall_seconds": 0.07588948681950569,
+    "result_lines": [
+      "All checks passed!"
+    ]
+  },
+  {
+    "run": "v4-n800-fp64-original",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--shapes",
+      "800",
+      "--api",
+      "original",
+      "--benchmark-inputs"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:51:50.801320+00:00",
+    "end_utc": "2026-09-21T06:51:59.519489+00:00",
+    "wall_seconds": 8.718178816139698,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "800",
+          "dim": 32,
+          "dtype": "bf16",
+          "api": "original",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": true
+        },
+        "seed": "734+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 32,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 800,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.002040014301060157,
+            "max_abs": 0.007677785009708948,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 6.979224396302559e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002441738715270882,
+            "max_abs": 0.016997232461900325,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0002197159893824408,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023626311590300344,
+            "max_abs": 0.010200890497298332,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002345307963511324,
+            "max_abs": 0.009493855516268024,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016820923829735704,
+            "max_abs": 0.061913188465364755,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.8352738283574581,
+        "reference_seconds": 4.0578024461865425,
+        "candidate_peak_allocated_bytes": 2769520640,
+        "total_peak_allocated_bytes": 4524196864,
+        "peak_reserved_bytes": 4924112896
+      },
+      {
+        "event": "summary",
+        "requested_cases": 1,
+        "completed_cases": 1,
+        "failures": 0,
+        "passed": true,
+        "api": "original",
+        "dtype": "bf16",
+        "dim": 32
+      }
+    ]
+  },
+  {
+    "run": "v4-n800-fp64-full-workspace",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--shapes",
+      "800",
+      "--api",
+      "full-workspace",
+      "--benchmark-inputs"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:51:59.590194+00:00",
+    "end_utc": "2026-09-21T06:52:08.595820+00:00",
+    "wall_seconds": 9.00563608855009,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "800",
+          "dim": 32,
+          "dtype": "bf16",
+          "api": "full-workspace",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": true
+        },
+        "seed": "734+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 32,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 800,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.002033978978261297,
+            "max_abs": 0.007677785009708948,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00010925105489184292,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002441549162013596,
+            "max_abs": 0.016997232461900325,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023626034041771015,
+            "max_abs": 0.010200890497298332,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002345306239322497,
+            "max_abs": 0.009493855516268024,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.001681942120642696,
+            "max_abs": 0.061913188465364755,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 1.1408857926726341,
+        "reference_seconds": 4.056258071213961,
+        "candidate_peak_allocated_bytes": 3384190976,
+        "total_peak_allocated_bytes": 4522230784,
+        "peak_reserved_bytes": 4714397696
+      },
+      {
+        "event": "summary",
+        "requested_cases": 1,
+        "completed_cases": 1,
+        "failures": 0,
+        "passed": true,
+        "api": "full-workspace",
+        "dtype": "bf16",
+        "dim": 32
+      }
+    ]
+  },
+  {
+    "run": "v4-n800-fp64-low-memory",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--shapes",
+      "800",
+      "--api",
+      "low-memory",
+      "--benchmark-inputs"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T06:52:08.666956+00:00",
+    "end_utc": "2026-09-21T06:52:18.404659+00:00",
+    "wall_seconds": 9.73771246150136,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "800",
+          "dim": 32,
+          "dtype": "bf16",
+          "api": "low-memory",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": true
+        },
+        "seed": "734+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 32,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 800,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.002033978978261297,
+            "max_abs": 0.007677785009708948,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00010925105489184292,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024415437072125134,
+            "max_abs": 0.016997232461900325,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0001964455576752365,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023626034041771015,
+            "max_abs": 0.010200890497298332,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002345306239322497,
+            "max_abs": 0.009493855516268024,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016819411106509699,
+            "max_abs": 0.061913188465364755,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 1.8167579285800457,
+        "reference_seconds": 4.058555070310831,
+        "candidate_peak_allocated_bytes": 2832640000,
+        "total_peak_allocated_bytes": 4522230784,
+        "peak_reserved_bytes": 4917821440
+      },
+      {
+        "event": "summary",
+        "requested_cases": 1,
+        "completed_cases": 1,
+        "failures": 0,
+        "passed": true,
+        "api": "low-memory",
+        "dtype": "bf16",
+        "dim": 32
+      }
+    ]
+  },
+  {
+    "run": "v4-full-target",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--api",
+      "full-workspace"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:00:35.092999+00:00",
+    "end_utc": "2026-09-21T07:00:52.589851+00:00",
+    "wall_seconds": 17.496861048042774,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "512,800,1024",
+          "dim": 32,
+          "dtype": "bf16",
+          "api": "full-workspace",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": false
+        },
+        "seed": "20260921+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 32,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 512,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.001877224434927398,
+            "max_abs": 0.007663613479505393,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002447729785480911,
+            "max_abs": 0.012745628075178678,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00013048041475849996,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023698072286496637,
+            "max_abs": 0.012234803495527746,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022814298437510917,
+            "max_abs": 0.1199493408203125,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016845678234593989,
+            "max_abs": 0.06254774906324556,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.7917939387261868,
+        "reference_seconds": 1.2602981850504875,
+        "candidate_peak_allocated_bytes": 1384923136,
+        "total_peak_allocated_bytes": 1912864768,
+        "peak_reserved_bytes": 2059403264
+      },
+      {
+        "event": "case",
+        "n": 800,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0019290983069481093,
+            "max_abs": 0.007779596312533332,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00014742835348304032,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024413194230581176,
+            "max_abs": 0.013750393359088786,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023625814020215106,
+            "max_abs": 0.014687289134654335,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022958736252239056,
+            "max_abs": 0.2041015625,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016818174066098228,
+            "max_abs": 0.059746108795103225,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.06803558394312859,
+        "reference_seconds": 3.8570773862302303,
+        "candidate_peak_allocated_bytes": 3448842240,
+        "total_peak_allocated_bytes": 4522787840,
+        "peak_reserved_bytes": 4907335680
+      },
+      {
+        "event": "case",
+        "n": 1024,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0019266644370996963,
+            "max_abs": 0.006887698129490083,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 1.7805819715109433e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002439811313957353,
+            "max_abs": 0.010920619764950068,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 7.082428348930038e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.002359048261044735,
+            "max_abs": 0.011590039495187554,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022818643550052385,
+            "max_abs": 0.2448577880859375,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 8.890223742778975e-05,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016746003089798502,
+            "max_abs": 0.06926344768732307,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.08373142033815384,
+        "reference_seconds": 7.571793794631958,
+        "candidate_peak_allocated_bytes": 5605720064,
+        "total_peak_allocated_bytes": 7332691968,
+        "peak_reserved_bytes": 8325693440
+      },
+      {
+        "event": "summary",
+        "requested_cases": 3,
+        "completed_cases": 3,
+        "failures": 0,
+        "passed": true,
+        "api": "full-workspace",
+        "dtype": "bf16",
+        "dim": 32
+      }
+    ]
+  },
+  {
+    "run": "v4-default-target",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--shapes",
+      "512,800,1024,1536,2048"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:00:52.660393+00:00",
+    "end_utc": "2026-09-21T07:02:43.154587+00:00",
+    "wall_seconds": 110.49420322850347,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "512,800,1024,1536,2048",
+          "dim": 32,
+          "dtype": "bf16",
+          "api": "low-memory",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": false
+        },
+        "seed": "20260921+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 32,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 512,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.001877224434927398,
+            "max_abs": 0.007663613479505393,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024477355870577543,
+            "max_abs": 0.012745628075178678,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023698072286496637,
+            "max_abs": 0.012234803495527746,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022814298437510917,
+            "max_abs": 0.1199493408203125,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016845648157397964,
+            "max_abs": 0.06254774906324556,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.8171013481914997,
+        "reference_seconds": 1.2607062496244907,
+        "candidate_peak_allocated_bytes": 1183596544,
+        "total_peak_allocated_bytes": 1912864768,
+        "peak_reserved_bytes": 1933574144
+      },
+      {
+        "event": "case",
+        "n": 800,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0019290983069481093,
+            "max_abs": 0.007779596312533332,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00014742835348304032,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024413186106636985,
+            "max_abs": 0.013750393359088786,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0001564938346093889,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023625814020215106,
+            "max_abs": 0.014687289134654335,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022958736252239056,
+            "max_abs": 0.2041015625,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016818200661654712,
+            "max_abs": 0.059746108795103225,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.07909907773137093,
+        "reference_seconds": 3.859671127051115,
+        "candidate_peak_allocated_bytes": 2899257344,
+        "total_peak_allocated_bytes": 4521739264,
+        "peak_reserved_bytes": 4930404352
+      },
+      {
+        "event": "case",
+        "n": 1024,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0019266644370996963,
+            "max_abs": 0.006887698129490083,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 1.7805819715109433e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024398111852361208,
+            "max_abs": 0.010920619764950068,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00021352833920201673,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.002359048261044735,
+            "max_abs": 0.011590039495187554,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.0022818643550052385,
+            "max_abs": 0.2448577880859375,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 8.890223742778975e-05,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.001674592113135216,
+            "max_abs": 0.06926344768732307,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 0.09380528330802917,
+        "reference_seconds": 7.573902517557144,
+        "candidate_peak_allocated_bytes": 4666195968,
+        "total_peak_allocated_bytes": 7332691968,
+        "peak_reserved_bytes": 7369392128
+      },
+      {
+        "event": "case",
+        "n": 1536,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0019727080528291244,
+            "max_abs": 0.007112218285541427,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 5.8558046105184026e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002437180533779482,
+            "max_abs": 0.013910116549156637,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 7.211046347798155e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023546427452429373,
+            "max_abs": 0.013023856717466753,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00022408218444308682,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002280661526329836,
+            "max_abs": 0.24433135986328125,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 6.828714099804774e-05,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016701493299631368,
+            "max_abs": 0.06681097327368235,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 1.4238258823752403,
+        "reference_seconds": 26.86528155207634,
+        "candidate_peak_allocated_bytes": 10313580544,
+        "total_peak_allocated_bytes": 16326590464,
+        "peak_reserved_bytes": 16536043520
+      },
+      {
+        "event": "case",
+        "n": 2048,
+        "dtype": "torch.bfloat16",
+        "dim": 32,
+        "checks": {
+          "output": {
+            "relative_l2": 0.001988510163378434,
+            "max_abs": 0.007036236488820791,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0002540450208055313,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.002435832742409834,
+            "max_abs": 0.012080504922904023,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 2.9628638742090783e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.002352952221533383,
+            "max_abs": 0.015875081573131666,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0001720735923932529,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002301762814906699,
+            "max_abs": 0.4643592834472656,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 3.509219212226832e-05,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016653274354106848,
+            "max_abs": 0.10881441521708979,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 1.6205765455961227,
+        "reference_seconds": 62.974070213735104,
+        "candidate_peak_allocated_bytes": 18192859136,
+        "total_peak_allocated_bytes": 28894560256,
+        "peak_reserved_bytes": 29228007424
+      },
+      {
+        "event": "summary",
+        "requested_cases": 5,
+        "completed_cases": 5,
+        "failures": 0,
+        "passed": true,
+        "api": "low-memory",
+        "dtype": "bf16",
+        "dim": 32
+      }
+    ]
+  },
+  {
+    "run": "v4-default-d128-target",
+    "command": [
+      "python",
+      "scripts/validate_fused.py",
+      "--shapes",
+      "256,512",
+      "--dim",
+      "128"
+    ],
+    "returncode": 0,
+    "start_utc": "2026-09-21T07:02:43.232834+00:00",
+    "end_utc": "2026-09-21T07:02:55.156220+00:00",
+    "wall_seconds": 11.923393171280622,
+    "records": [
+      {
+        "event": "start",
+        "args": {
+          "shapes": "256,512",
+          "dim": 128,
+          "dtype": "bf16",
+          "api": "low-memory",
+          "chunk_i": 128,
+          "reference_chunk": 8,
+          "benchmark_inputs": false
+        },
+        "seed": "20260921+n",
+        "dtype": "torch.bfloat16",
+        "batch": 1,
+        "heads": 8,
+        "dim": 128,
+        "relative_limit": 0.012,
+        "zero_atol": 2e-05,
+        "mask_fill": -10000.0,
+        "torch": "2.13.0a0+9186a08b2c.nv26.07",
+        "device": "NVIDIA H20-3e",
+        "reference": "independent FP64 matmul/finite-mask/softmax/autograd, chunked over i",
+        "sources": {
+          "scripts/validate_fused.py": "04f70575a4430d4485de2b87aab6513311ce83f313a1fcdb6a942f6a9b82b04f",
+          "src/trifast/__init__.py": "7991e4899fe05dabd35c0ba453c516f9a22a7f1b7d7b6937441d202bf1fc8caf",
+          "src/trifast/_fused_backward.py": "ea16395d6689ab7be92611a2197ed144385fd548b538f38cbdf698e447572e59",
+          "src/trifast/_fused_chunked.py": "234cff8c05c34d85641a88e847a47c2607ed15fc0391d590493e2457f61a3bf9",
+          "src/trifast/_fused_forward.py": "5d7cd29c12a6fa268a6e4507fc8525515410a1314ff93c6b6c67ede0acef8e06",
+          "src/trifast/autotune.py": "0909cf562b06259aae34986a5d826e4c8fb2860816689b6b6ba56be3a44595b9",
+          "src/trifast/autotune_helpers.py": "8bfc1a3c2ec06c001188766b6231523cb767466c22d6fbcae2089f2a410e9b9a",
+          "src/trifast/equiv.py": "d8b293f80a605d4912704ae35e9b60b8dbe18c83e81c8be85657afc58a197097",
+          "src/trifast/fused_api.py": "a7b12932edc82eff167823476b3ccc1d5946c20a5963a01698a186eccaaaa54d",
+          "src/trifast/fused_low_memory_api.py": "a980f6ae884d5f64b78674400bb81127a6469f72b8ac207f9196e1ce03dac838",
+          "src/trifast/torch.py": "ccbd6dabc51f89132b4f0ce17506376a83484a5430f210b5bd7b23ef02641d72",
+          "src/trifast/triton.py": "e71e3f7493e10235efd9b4a63ba5e4940f8e27bd84b5959d51dda2964e1849a9",
+          "src/trifast/tune.py": "e960cf5e0074c8481211d754d8db24831b6b7d9f75fcab589b7bbe73c361e132",
+          "src/trifast/utils.py": "59be46971a782cae0ade81747b553ce7b4669879890d023e0caf0f3852dcf212"
+        }
+      },
+      {
+        "event": "case",
+        "n": 256,
+        "dtype": "torch.bfloat16",
+        "dim": 128,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0018514212190443022,
+            "max_abs": 0.007778124654924223,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0024045126430012826,
+            "max_abs": 0.01406279562587942,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.002386260447402245,
+            "max_abs": 0.012526701157494102,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00016053845525441246,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002270986724088196,
+            "max_abs": 0.1240234375,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0017155628456044247,
+            "max_abs": 0.12264621477680748,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 2.4476433768868446,
+        "reference_seconds": 0.6878611221909523,
+        "candidate_peak_allocated_bytes": 1219567616,
+        "total_peak_allocated_bytes": 1436614656,
+        "peak_reserved_bytes": 1484783616
+      },
+      {
+        "event": "case",
+        "n": 512,
+        "dtype": "torch.bfloat16",
+        "dim": 128,
+        "checks": {
+          "output": {
+            "relative_l2": 0.0018973574197280526,
+            "max_abs": 0.007746195944036138,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 3.860372227332827e-05,
+            "finite": true,
+            "passed": true
+          },
+          "dq": {
+            "relative_l2": 0.0023863857063767314,
+            "max_abs": 0.014380230991042797,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0003284369527493679,
+            "finite": true,
+            "passed": true
+          },
+          "dk": {
+            "relative_l2": 0.0023675275176205605,
+            "max_abs": 0.013876198960313335,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          },
+          "dv": {
+            "relative_l2": 0.002279325879474757,
+            "max_abs": 0.2256622314453125,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.00021646042268219363,
+            "finite": true,
+            "passed": true
+          },
+          "db": {
+            "relative_l2": 0.0016918810215956336,
+            "max_abs": 0.220409486432402,
+            "zero_max_abs": 0.0,
+            "rounded_zero_reference_max_abs": 0.0,
+            "finite": true,
+            "passed": true
+          }
+        },
+        "passed": true,
+        "candidate_seconds": 1.6965672224760056,
+        "reference_seconds": 3.217821169644594,
+        "candidate_peak_allocated_bytes": 4674830336,
+        "total_peak_allocated_bytes": 5310251008,
+        "peak_reserved_bytes": 5471469568
+      },
+      {
+        "event": "summary",
+        "requested_cases": 2,
+        "completed_cases": 2,
+        "failures": 0,
+        "passed": true,
+        "api": "low-memory",
+        "dtype": "bf16",
+        "dim": 128
+      }
+    ]
+  }
+]

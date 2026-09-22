@@ -1,0 +1,105 @@
+--- 4b832de/_fused_forward_tma.py
++++ candidate_noop_pad.py
+@@ -46,7 +46,7 @@
+ 
+ # fmt: off
+ @triton.jit
+-def _tma_kv_block(
++def _tma_noop_pad_kv_block(
+     # Loop-carried online-softmax state, returned updated.
+     acc, sm_denom, scores_max,
+     q_block,
+@@ -155,13 +155,13 @@
+ 
+ 
+ @autotune(
+-    configs=_fwd_configs,
++    configs=_fwd_configs[:8],
+     key=["H", "DIM", "CLOSEST_N"],
+     prune_configs_by={"early_config_prune": prune_fwd_configs},
+-    cache_name="fused_tma_runtime_bucket_vector_store_v3",
++    cache_name="forward_experiment_noop_pad_tma_v1",
+ )
+ @triton.jit(do_not_specialize=_RUNTIME_ARGS)
+-def _fused_tma(
++def _fused_tma_noop_pad(
+     o_ptr, stride_oh: tl.int64, stride_om: tl.int64, stride_on: tl.constexpr, stride_od: tl.constexpr,
+     # lse/mx/dn are allocated side by side in torch.py -- same shape, dtype and layout
+     # -- so one set of strides serves all three.
+@@ -263,7 +263,7 @@
+     n_full = (N // BLOCK_K) * BLOCK_K
+     for start_k in tl.range(0, n_full, BLOCK_K):
+         start_k = tl.multiple_of(start_k, BLOCK_K)
+-        acc, sm_denom, scores_max = _tma_kv_block(
++        acc, sm_denom, scores_max = _tma_noop_pad_kv_block(
+             acc, sm_denom, scores_max, q_block,
+             kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+             desc_b, desc_k, desc_v, desc_mask,
+@@ -284,7 +284,7 @@
+     # The ragged tail, at most one block, and only when N is not a multiple of
+     # BLOCK_K. The pointers were left pointing at it by the loop above.
+     if n_full < N:
+-        acc, sm_denom, scores_max = _tma_kv_block(
++        acc, sm_denom, scores_max = _tma_noop_pad_kv_block(
+             acc, sm_denom, scores_max, q_block,
+             kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+             desc_b, desc_k, desc_v, desc_mask,
+@@ -312,15 +312,15 @@
+ # fmt: on
+ 
+ 
+-_fused_tma_pointer = autotune(
+-    configs=_fwd_pointer_configs,
++_fused_tma_noop_pad_pointer = autotune(
++    configs=_fwd_pointer_configs[:4],
+     key=["H", "DIM", "CLOSEST_N"],
+     prune_configs_by={"early_config_prune": prune_fwd_configs},
+-    cache_name="fused_tma_pointer_runtime_bucket_vector_store_v3",
+-)(_fused_tma.fn)
+-
+-
+-@triton_op("trifast::fused_forward_tma_bucket", mutates_args={})
++    cache_name="forward_experiment_noop_pad_pointer_v1",
++)(_fused_tma_noop_pad.fn)
++
++
++@triton_op("trifast_experiment::fused_forward_tma_noop_pad", mutates_args={})
+ def fused_forward_tma(
+     q: torch.Tensor,
+     k: torch.Tensor,
+@@ -454,9 +454,9 @@
+         padded_mask_n = triton.cdiv(n, mask_alignment) * mask_alignment
+         # The widened copy. Only the truth of each entry is read, so 0.0/1.0 is
+         # enough. Costs n**2 * 2 B (2 MB at n=1024) and ~35 us, once per call.
+-        wide_mask = torch.nn.functional.pad(
+-            mask.to(MASK_TMA_DTYPE), (0, padded_mask_n - n)
+-        )
++        wide_mask = mask.to(MASK_TMA_DTYPE)
++        if padded_mask_n != n:
++            wide_mask = torch.nn.functional.pad(wide_mask, (0, padded_mask_n - n))
+         # Fold (batch, i) into a single row axis so the kernel can address a row as
+         # `batch * N + i`. Rank-2 is load bearing: a rank-3 box over [batch, i, k]
+         # gives up the whole speedup. block_shape is a placeholder that
+@@ -471,7 +471,9 @@
+         # on hopper, tma requires 16 bytes alignment
+         bias_alignment = 16 // b.element_size()
+         padded_n = triton.cdiv(n, bias_alignment) * bias_alignment
+-        padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
++        padded_b = b
++        if padded_n != n:
++            padded_b = torch.nn.functional.pad(b, (0, padded_n - n))
+         # The block_shape is a placeholder; _fwd_descriptor_pre_hook rewrites it
+         # to [BLOCK_J, BLOCK_K] of the selected autotune config.
+         desc_b = TensorDescriptor.from_tensor(
+@@ -505,9 +507,9 @@
+     # _fwd_pointer is the hook-free clone for traced/fake-tensor execution, so it is
+     # only reachable when *no* descriptor was built. The mask now joins that vote.
+     fwd_kernel = (
+-        _fused_tma
++        _fused_tma_noop_pad
+         if (can_use_tma or can_use_tma_bias or can_use_tma_mask)
+-        else _fused_tma_pointer
++        else _fused_tma_noop_pad_pointer
+     )
+ 
+     # fmt: off

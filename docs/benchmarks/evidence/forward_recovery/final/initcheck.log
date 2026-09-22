@@ -1,0 +1,10 @@
+========= COMPUTE-SANITIZER
+.....                                                                    [100%]
+=============================== warnings summary ===============================
+tests/unit/test_fused.py::test_sanitizer_smoke[full-65-32-dtype0-spatial-1-1]
+  /workspace/trifast-pr/src/trifast/autotune_helpers.py:23: DeprecationWarning: support for supplying keyword arguments to pathlib.PurePath is deprecated and scheduled for removal in Python 3.14
+    config_dir = Path(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 344 deselected, 1 warning in 35.81s
+========= ERROR SUMMARY: 0 errors

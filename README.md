@@ -1,5 +1,7 @@
 # TriFast
 
+> **Bucketed runtime-N fused attention.** The opt-in fused API uses the same power-of-two length buckets as upstream, with real N kept at runtime. The BF16/FP16 Hopper path retains upstream TMA forward transfers and uses fused backward. See [current implementation and measurements](docs/forward_tuning.md) / [中文报告](docs/forward_tuning_zh.md). The original `triangle_attention` is unchanged.
+
 This is TriFast fork, which is optimized for Hopper GPU.
 
 `src/trifast/triton.py`: the fwd and bwd kernels.
@@ -39,3 +41,24 @@ TriFast individual-kernel throughput — BF16 (TFLOP/s)
 │ 1024 │  103.46 │      98.36 │        71.92 │         72.86 │
 └──────┴─────────┴────────────┴──────────────┴───────────────┘
 ```
+
+## Opt-in fused backward
+
+An optional fused implementation shares backward score/probability recomputation.
+The original `triangle_attention` remains unchanged. The opt-in
+`triangle_attention_fused` defaults to low-memory chunking (`chunk_i=128`),
+trading additional launches for bounded FP32 dQ scratch. Pass `chunk_i=None`
+for the full-workspace fused mode. This is a fixed default, not automatic
+selection based on free GPU memory.
+
+```python
+from trifast import triangle_attention_fused
+out = triangle_attention_fused(q, k, v, bias, mask)  # low-memory, chunk_i=128
+# out = triangle_attention_fused(q, k, v, bias, mask, chunk_i=None)
+```
+
+The explicit `triangle_attention_fused_low_memory` helper remains available
+for compatibility; it requires a positive integer chunk size and rejects `None`.
+
+See [current implementation, validation and measurements](docs/forward_tuning.md) /
+[中文说明](docs/forward_tuning_zh.md).

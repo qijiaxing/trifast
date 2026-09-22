@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python",
+    "scripts/check_dynamic_n.py"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-21T09:01:28.182316+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-21T09:01:37.868856+00:00",
+  "wall_seconds": 9.686546977609396
+}

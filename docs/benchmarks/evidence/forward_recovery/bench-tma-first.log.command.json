@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "scripts/bench_fused.py",
+    "--shapes",
+    "500,512,513,640,768,800,1024"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T08:48:27.034067+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T08:49:24.896272+00:00",
+  "wall_seconds": 57.86220742017031
+}

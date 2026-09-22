@@ -1,0 +1,120 @@
+--- 4b832de/_fused_forward_tma.py
++++ candidate_tail_first.py
+@@ -46,7 +46,7 @@
+ 
+ # fmt: off
+ @triton.jit
+-def _tma_kv_block(
++def _tma_tail_first_kv_block(
+     # Loop-carried online-softmax state, returned updated.
+     acc, sm_denom, scores_max,
+     q_block,
+@@ -155,13 +155,13 @@
+ 
+ 
+ @autotune(
+-    configs=_fwd_configs,
++    configs=_fwd_configs[:8],
+     key=["H", "DIM", "CLOSEST_N"],
+     prune_configs_by={"early_config_prune": prune_fwd_configs},
+-    cache_name="fused_tma_runtime_bucket_vector_store_v3",
++    cache_name="forward_experiment_tail_first_tma_v1",
+ )
+ @triton.jit(do_not_specialize=_RUNTIME_ARGS)
+-def _fused_tma(
++def _fused_tma_tail_first(
+     o_ptr, stride_oh: tl.int64, stride_om: tl.int64, stride_on: tl.constexpr, stride_od: tl.constexpr,
+     # lse/mx/dn are allocated side by side in torch.py -- same shape, dtype and layout
+     # -- so one set of strides serves all three.
+@@ -257,13 +257,29 @@
+     else:
+         q_block = tl.load(q_ptrs, mask_j[:, None], other=0)  # [j,d]
+ 
+-    # Peel the k loop: full blocks cannot run past N, so they skip the range compare
+-    # and three [j,k] selects that are no-ops there. `n_full` is a runtime value, so
+-    # this stays one kernel variant per CLOSEST_N bucket -- no new specialization.
++    # Experiment: seed online softmax with the ragged key block before
++    # the pipelined full-block loop. This changes floating-point reduction order.
+     n_full = (N // BLOCK_K) * BLOCK_K
++    if n_full < N:
++        acc, sm_denom, scores_max = _tma_tail_first_kv_block(
++            acc, sm_denom, scores_max, q_block,
++            kt_ptrs + n_full * stride_kn,
++            b_ptrs + n_full * stride_bn,
++            v_ptrs + n_full * stride_vn,
++            mask_ptrs + n_full * stride_maskn,
++            desc_b, desc_k, desc_v, desc_mask,
++            mask_j, k_idxs,
++            start_h, start_i, start_j, n_full, mask_start_h,
++            sm_scale, neg_inf2, inv_ln2, N,
++            input_dtype,
++            DIM, BLOCK_J, BLOCK_K,
++            USE_TMA, USE_TMA_BIAS, USE_TMA_MASK,
++            K_MASKED=True,
++        )
++
+     for start_k in tl.range(0, n_full, BLOCK_K):
+         start_k = tl.multiple_of(start_k, BLOCK_K)
+-        acc, sm_denom, scores_max = _tma_kv_block(
++        acc, sm_denom, scores_max = _tma_tail_first_kv_block(
+             acc, sm_denom, scores_max, q_block,
+             kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+             desc_b, desc_k, desc_v, desc_mask,
+@@ -281,22 +297,6 @@
+         b_ptrs += BLOCK_K * stride_bn
+         mask_ptrs += BLOCK_K * stride_maskn
+ 
+-    # The ragged tail, at most one block, and only when N is not a multiple of
+-    # BLOCK_K. The pointers were left pointing at it by the loop above.
+-    if n_full < N:
+-        acc, sm_denom, scores_max = _tma_kv_block(
+-            acc, sm_denom, scores_max, q_block,
+-            kt_ptrs, b_ptrs, v_ptrs, mask_ptrs,
+-            desc_b, desc_k, desc_v, desc_mask,
+-            mask_j, k_idxs,
+-            start_h, start_i, start_j, n_full, mask_start_h,
+-            sm_scale, neg_inf2, inv_ln2, N,
+-            input_dtype,
+-            DIM, BLOCK_J, BLOCK_K,
+-            USE_TMA, USE_TMA_BIAS, USE_TMA_MASK,
+-            K_MASKED=True,
+-        )
+-
+ 
+     normalize = acc / sm_denom[:, None]
+     final_output = normalize.to(input_dtype)
+@@ -312,15 +312,15 @@
+ # fmt: on
+ 
+ 
+-_fused_tma_pointer = autotune(
+-    configs=_fwd_pointer_configs,
++_fused_tma_tail_first_pointer = autotune(
++    configs=_fwd_pointer_configs[:4],
+     key=["H", "DIM", "CLOSEST_N"],
+     prune_configs_by={"early_config_prune": prune_fwd_configs},
+-    cache_name="fused_tma_pointer_runtime_bucket_vector_store_v3",
+-)(_fused_tma.fn)
+-
+-
+-@triton_op("trifast::fused_forward_tma_bucket", mutates_args={})
++    cache_name="forward_experiment_tail_first_pointer_v1",
++)(_fused_tma_tail_first.fn)
++
++
++@triton_op("trifast_experiment::fused_forward_tma_tail_first", mutates_args={})
+ def fused_forward_tma(
+     q: torch.Tensor,
+     k: torch.Tensor,
+@@ -505,9 +505,9 @@
+     # _fwd_pointer is the hook-free clone for traced/fake-tensor execution, so it is
+     # only reachable when *no* descriptor was built. The mask now joins that vote.
+     fwd_kernel = (
+-        _fused_tma
++        _fused_tma_tail_first
+         if (can_use_tma or can_use_tma_bias or can_use_tma_mask)
+-        else _fused_tma_pointer
++        else _fused_tma_tail_first_pointer
+     )
+ 
+     # fmt: off

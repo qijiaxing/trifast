@@ -1,0 +1,32 @@
+[
+  {
+    "kwargs": {
+      "BLOCK_J": 64,
+      "BLOCK_K": 64
+    },
+    "num_warps": 4,
+    "num_stages": 2,
+    "num_ctas": 1,
+    "maxnreg": 96
+  },
+  {
+    "kwargs": {
+      "BLOCK_J": 64,
+      "BLOCK_K": 64
+    },
+    "num_warps": 4,
+    "num_stages": 2,
+    "num_ctas": 1,
+    "maxnreg": null
+  },
+  {
+    "kwargs": {
+      "BLOCK_J": 64,
+      "BLOCK_K": 64
+    },
+    "num_warps": 4,
+    "num_stages": 3,
+    "num_ctas": 1,
+    "maxnreg": null
+  }
+]

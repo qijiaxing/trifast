@@ -1,0 +1,12 @@
+{"event": "poison_pass", "n": 65, "d": 32, "dtype": "torch.bfloat16", "store": "tma_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 65, "d": 32, "dtype": "torch.bfloat16", "store": "tma_store", "explicit_sync": true}
+{"event": "poison_pass", "n": 65, "d": 32, "dtype": "torch.bfloat16", "store": "pointer_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 65, "d": 32, "dtype": "torch.bfloat16", "store": "pointer_store", "explicit_sync": true}
+{"event": "poison_pass", "n": 65, "d": 128, "dtype": "torch.float16", "store": "tma_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 65, "d": 128, "dtype": "torch.float16", "store": "tma_store", "explicit_sync": true}
+{"event": "poison_pass", "n": 65, "d": 128, "dtype": "torch.float16", "store": "pointer_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 65, "d": 128, "dtype": "torch.float16", "store": "pointer_store", "explicit_sync": true}
+{"event": "poison_pass", "n": 1, "d": 32, "dtype": "torch.bfloat16", "store": "tma_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 1, "d": 32, "dtype": "torch.bfloat16", "store": "tma_store", "explicit_sync": true}
+{"event": "poison_pass", "n": 1, "d": 32, "dtype": "torch.bfloat16", "store": "pointer_store", "explicit_sync": false}
+{"event": "poison_pass", "n": 1, "d": 32, "dtype": "torch.bfloat16", "store": "pointer_store", "explicit_sync": true}

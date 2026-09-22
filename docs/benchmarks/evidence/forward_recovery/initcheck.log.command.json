@@ -1,0 +1,21 @@
+{
+  "command": [
+    "compute-sanitizer",
+    "--tool",
+    "initcheck",
+    "--error-exitcode",
+    "99",
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/unit/test_fused.py",
+    "-m",
+    "sanitizer"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:01:49.026495+00:00",
+  "state": "running",
+  "timeout_seconds": 300,
+  "scope": "command wall time including compilation and host work; not GPU busy time"
+}

@@ -1,0 +1,27 @@
+{
+  "command": [
+    "ncu",
+    "--set",
+    "basic",
+    "--profile-from-start",
+    "off",
+    "--kernel-name",
+    "regex:_fused_tma",
+    "--launch-count",
+    "1",
+    "--export",
+    "/workspace/experiments/forward-tuning-20260922/profile-800",
+    "python",
+    "/workspace/experiments/forward-tuning-20260922/profile_forward.py",
+    "--n",
+    "800"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:36:46.244302+00:00",
+  "state": "finished",
+  "timeout_seconds": 240,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 1,
+  "end_utc": "2026-09-22T09:36:52.994313+00:00",
+  "wall_seconds": 6.750017654150724
+}

@@ -1,0 +1,9 @@
+==WARNING== Could not deploy stock section files to "/home/shuazhang/Documents/NVIDIA Nsight Compute/2026.2.1/Sections".
+Set the HOME environment variable to a writable directory.
+==WARNING== Using "/opt/nvidia/nsight-compute/2026.2.1/target/linux-desktop-glibc_2_11_3-x64/../../sections" instead.
+==WARNING== See https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#faq.
+==PROF== Connected to process 576037 (/usr/bin/python3.12)
+{"n": 800, "config": "BLOCK_J: 64, BLOCK_K: 64, num_warps: 4, num_ctas: 1, num_stages: 3, maxnreg: None"}
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+complete
+==PROF== Disconnected from process 576037

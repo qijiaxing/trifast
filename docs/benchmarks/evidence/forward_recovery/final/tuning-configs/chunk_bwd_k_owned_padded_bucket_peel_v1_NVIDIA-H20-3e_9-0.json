@@ -1,0 +1,443 @@
+{
+    "2_16_64_64_False_1_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_1_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_True_1_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_1_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_1_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_True_1_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_1_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_1_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_32_32_True_1_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_1_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_1_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_32_True_1_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_4_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_4_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_True_4_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_4_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_4_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_True_4_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_4_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_4_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_32_32_True_4_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_4_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_4_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_32_True_4_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_32_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_32_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_True_32_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_32_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_32_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_True_32_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_32_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_32_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_32_32_True_32_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_32_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_32_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_32_True_32_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_128_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_128_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_True_128_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_128_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_128_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_True_128_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_128_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_128_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_32_32_True_128_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_128_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_128_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_32_True_128_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_256_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_False_256_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_16_64_64_True_256_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_256_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_False_256_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_32_64_64_True_256_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_256_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_64_64_False_256_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_64_32_32_True_256_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_256_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_64_False_256_torch.float16_torch.float16_torch.float16_torch.float16_torch.float32_torch.int32_torch.float32_torch.float16_torch.float32_torch.float32_torch.bool_torch.float32_torch.float16_torch.float16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "2_128_32_32_True_256_torch.float32_torch.float32_torch.float32_torch.float32_torch.float32_torch.int32_torch.float32_torch.float32_torch.float32_torch.float32_torch.bool_torch.float32_torch.float32_torch.float32_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 1,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "1_32_64_64_False_128_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 2,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "8_32_64_64_False_512_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    },
+    "8_32_64_64_False_1024_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.bfloat16_torch.float32_torch.int32_torch.float32_torch.bfloat16_torch.float32_torch.float32_torch.bool_torch.float32_torch.bfloat16_torch.bfloat16_torch.float32": {
+        "kwargs": {},
+        "num_warps": 4,
+        "num_stages": 3,
+        "num_ctas": 1,
+        "maxnreg": null
+    }
+}

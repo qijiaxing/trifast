@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "scripts/check_bucketed_n.py",
+    "--dtype",
+    "fp32",
+    "--dim",
+    "128",
+    "--shapes",
+    "65,80,127,128,65,1,1",
+    "--contiguous-do"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T06:48:38.304301+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T06:49:35.758871+00:00",
+  "wall_seconds": 57.45457671955228
+}

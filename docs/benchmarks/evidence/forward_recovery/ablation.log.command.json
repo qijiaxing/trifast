@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "/workspace/experiments/forward-recovery-20260922/ablate_forward.py",
+    "--shapes",
+    "512,800,1024"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T08:46:55.824633+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T08:47:24.492431+00:00",
+  "wall_seconds": 28.667804036289454
+}

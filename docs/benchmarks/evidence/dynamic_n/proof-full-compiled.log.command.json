@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "scripts/check_dynamic_n.py",
+    "--chunk-i",
+    "0",
+    "--torch-compile"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-21T09:08:54.467387+00:00",
+  "state": "finished",
+  "timeout_seconds": 180,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-21T09:09:07.277441+00:00",
+  "wall_seconds": 12.810060005635023
+}

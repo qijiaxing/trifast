@@ -1,0 +1,3 @@
+# Raw benchmark evidence is generated output; preserve it byte for byte.
+docs/benchmarks/evidence/** linguist-generated=true
+docs/benchmarks/evidence/**/*.log -whitespace
