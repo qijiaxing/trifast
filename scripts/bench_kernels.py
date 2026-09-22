@@ -19,9 +19,10 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 import trifast.torch as trifast_torch
 from trifast.autotune_helpers import device_name
 from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS, USE_TMA_MASK
+from trifast.torch import USE_TMA_BWD_BIAS
 from trifast.torch import _triangle_attention, triangle_attention_bwd
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
-from trifast.triton_bwd import _bwd_fused_tuned, _bwd_preprocess
+from trifast.triton_bwd import _bwd_bias_prep, _bwd_fused_tuned, _bwd_preprocess
 from trifast.utils import confirm_gpu_stayed_idle, gen_tensors, require_idle_gpu
 
 N_VALUES = [512, 640, 768, 800, 1024]
@@ -407,6 +408,27 @@ def _make_launchers(
     dbt = torch.zeros((bh, n, n), device=q.device, dtype=torch.float32)
     dq_acc = torch.zeros((bh, n, n, d), device=q.device, dtype=torch.float32)
 
+    # The fp32, inv_ln2-scaled, [bh, k, j] bias. Keep in sync with
+    # trifast.torch.triangle_attention_bwd.
+    # Not `padded_n`: that name is already the forward bias's 8-element padding above.
+    padded_b2t_n = triton.cdiv(n, 16) * 16
+    b2t = torch.zeros((bh, n, padded_b2t_n), device=q.device, dtype=torch.float32)
+    use_tma_bwd_bias = USE_TMA_BWD_BIAS
+    if use_tma_bwd_bias:
+        # Placeholder box; _bwd_descriptor_pre_hook rewrites it per autotune config.
+        desc_b2t = TensorDescriptor.from_tensor(
+            b2t.reshape(bh * n, padded_b2t_n), block_shape=[64, 64]
+        )
+    else:
+        desc_b2t = b2t
+
+    def run_bwd_bias_prep() -> None:
+        _bwd_bias_prep[(triton.cdiv(n, 32), triton.cdiv(n, 32), bh)](
+            bias, bias.stride(0), bias.stride(1), bias.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
+            n, BLOCK=32, num_warps=4,
+        )
+
     def run_bwd_fused() -> None:
         # Keep this argument list in sync with trifast.torch.triangle_attention_bwd.
         _bwd_fused_tuned[bwd_fused_grid](
@@ -414,10 +436,11 @@ def _make_launchers(
             q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            bias, bias.stride(0), bias.stride(1), bias.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
             mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
             mask, mask.stride(0), mask.stride(1), mask.stride(2),
             do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            desc_b2t,
             dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
             dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
             dbt, dbt.stride(0), dbt.stride(1), dbt.stride(2),
@@ -425,6 +448,7 @@ def _make_launchers(
             sm_scale=sm_scale, neg_inf=MASK_FILL,
             N=n, H=h, DIM=d, CLOSEST_N=closest_n,
             NEED_DB=True, NEED_DQ=True,
+            USE_TMA_BIAS=use_tma_bwd_bias,
         )
 
     def run_bwd_pre() -> None:
@@ -442,6 +466,7 @@ def _make_launchers(
         "bwd_b": run_bwd_b,
         "bwd_fused": run_bwd_fused,
         "bwd_pre": run_bwd_pre,
+        "bwd_bias_prep": run_bwd_bias_prep,
     }
 
 
@@ -460,8 +485,10 @@ def benchmark(n, dtype, kernel):
         # Populate o/mx/dn.  All backward kernels consume these values.
         launchers["fwd"]()
         if kernel == "bwd_fused":
-            # Populate delta.  The fused kernel reads it but no longer produces it.
+            # Populate delta and the fp32 pre-scaled bias.  The fused kernel reads both
+            # but produces neither.
             launchers["bwd_pre"]()
+            launchers["bwd_bias_prep"]()
         elif kernel != "fwd":
             # Populate delta.  This also compiles/tunes bwd_q before bwd_q itself
             # is timed and supplies the input needed by bwd_kv and bwd_b.

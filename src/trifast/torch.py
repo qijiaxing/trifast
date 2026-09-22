@@ -16,6 +16,7 @@ from trifast.triton import (
 )
 from trifast.autotune_bwd import pinned_bwd_fused_config
 from trifast.triton_bwd import (
+    _bwd_bias_prep,
     _bwd_fused,
     _bwd_fused_tuned,
     _bwd_preprocess,
@@ -44,6 +45,10 @@ USE_TMA_BIAS = True
 # Route the bool mask through TMA as a bf16 copy instead of a per-iteration pointer
 # load. Worth ~+2% on the forward; flip to False to fall back to the pointer load.
 USE_TMA_MASK = True
+# Route the fused backward's fp32 bias tile through TMA instead of a pointer load. Flip to
+# False to fall back; both paths are exercised by scripts/bench_kernels.py, and the
+# fake-tensor path takes the pointer load regardless.
+USE_TMA_BWD_BIAS = True
 # Run the backward as one fused kernel (plus two memory-bound passes) instead of the
 # three kernels in triton.py, which each recompute the score tile. Flip to False to fall
 # back to them; both paths are exercised by scripts/bench_kernels.py. The fused path
@@ -309,7 +314,19 @@ def triangle_attention_bwd(
         dbt = torch.zeros((bh, n, n), dtype=torch.float32, device=q.device)
         dq_acc = torch.zeros((bh, n, n, dim), dtype=torch.float32, device=q.device)
 
-        # delta = rowsum(o * do).
+        # The fp32, inv_ln2-scaled, [bh, k, j] bias -- same orientation as dbt. This is a
+        # *new* tensor, never a rebinding of `b`: the three-kernel path below still reads
+        # the original input-dtype [bh, j, k] bias, and b.dtype is still needed for the db
+        # cast. +33 MB at n=1024, against dq_acc's 1.07 GB.
+        #
+        # The last axis is padded to 16 elements (64 B) so every row starts 16-byte
+        # aligned, which is what a TMA descriptor over this buffer will require.
+        # `torch.zeros` rather than `empty` only so the pad is defined -- correctness does
+        # not rest on it, `_bwd_j_block`'s `in_rangeT` is what bounds the reads.
+        padded_n = triton.cdiv(n, 16) * 16
+        b2t = torch.zeros((bh, n, padded_n), dtype=torch.float32, device=q.device)
+
+        # delta = rowsum(o * do), and the bias pre-pass.
         # fmt: off
         wrap_triton(_bwd_preprocess)[(triton.cdiv(n, 64), n, bh)](
             o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
@@ -317,7 +334,34 @@ def triangle_attention_bwd(
             d, d.stride(0), d.stride(1), d.stride(2),
             n, DIM=dim, BLOCK_J=64, num_warps=4,
         )
+        wrap_triton(_bwd_bias_prep)[(triton.cdiv(n, 32), triton.cdiv(n, 32), bh)](
+            b, b.stride(0), b.stride(1), b.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
+            n, BLOCK=32, num_warps=4,
+        )
         # fmt: on
+
+        # Route the bias tile through TMA. The payoff is not registers -- taking the tile
+        # out of the register file moves 255 -> ~239, nowhere near the <=170 that 3 CTAs/SM
+        # needs. It is that the fp32 tile is otherwise staged to shared memory *from
+        # registers*, which cost `LDS` 13.4 % of stall samples; TMA writes shared memory
+        # directly from global instead.
+        #
+        # `_is_fake` because fake tensors cannot build a tensormap -- and that path also
+        # launches the bare kernel with a pinned config, where no config pre_hook runs to
+        # fix up the box. Both reasons point the same way: it keeps the pointer load.
+        can_use_tma_bias = USE_TMA_BWD_BIAS and not _is_fake(b2t)
+        if can_use_tma_bias:
+            # Rank 2, folding (bh, k) into one row axis: a box is then [BLOCK_K, BLOCK_J]
+            # with no rank-4 indexing, matching how _fwd views its own bias. The
+            # block_shape here is a placeholder; _bwd_descriptor_pre_hook rewrites it to
+            # the selected config. padded_n is already a multiple of 16 elements, so every
+            # row satisfies TMA's 16-byte stride alignment without an F.pad.
+            desc_b2t = TensorDescriptor.from_tensor(
+                b2t.reshape(bh * n, padded_n), block_shape=[64, 64]
+            )
+        else:
+            desc_b2t = b2t
 
         def fused_grid(x):
             return (triton.cdiv(n, x["BLOCK_K"]), n, bh)
@@ -341,10 +385,11 @@ def triangle_attention_bwd(
             q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            b, b.stride(0), b.stride(1), b.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
             mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
             mask, mask.stride(0), mask.stride(1), mask.stride(2),
             do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            desc_b2t,
             dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
             dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
             dbt, dbt.stride(0), dbt.stride(1), dbt.stride(2),
@@ -354,6 +399,7 @@ def triangle_attention_bwd(
             N=n, H=h, DIM=dim,
             CLOSEST_N=CLOSEST_N,
             NEED_DB=True, NEED_DQ=True,
+            USE_TMA_BIAS=can_use_tma_bias,
             **fused_cfg,
         )
         # fmt: on

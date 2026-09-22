@@ -36,6 +36,8 @@ def main() -> None:
     # Populate o/mx/dn and delta so every backward kernel has valid inputs.
     launchers["fwd"]()
     launchers["bwd_q"]()
+    # The fused kernel also needs the fp32 pre-scaled bias, which it does not produce.
+    launchers["bwd_bias_prep"]()
     torch.cuda.synchronize()
 
     # The launches ncu should actually profile.

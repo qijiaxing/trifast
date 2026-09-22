@@ -31,6 +31,47 @@ at DIM=32 it demotes to `mma.sync` and costs 5.3 ms more end to end; at DIM=64 i
 outright with an out-of-range shared address, because `k_blk` is already a wgmma operand
 untransposed and asking for both of its layouts overruns the allocation. So dq pays one
 accumulator transpose, `dot(trans(ds), k)`, and lands in its natural `[j, d]` layout.
+
+3. **The bias reaches the kernel as fp32, pre-scaled and pre-transposed** -- `_bwd_bias_prep`
+   builds `b2t[bh, k, j] = b[bh, j, k] * inv_ln2` once. `_bwd_fused` then reads it in its
+   natural `[k, j]` orientation and folds it in with a single FFMA.
+
+   This is worth a paragraph because the obvious reading of the profile is the wrong one.
+   ncu's PC sampling puts **22.95 % of all not-issued stall samples on the old bias load**,
+   but only 0.45 % of that is `LDG`: the read itself always coalesced into
+   `ld.global.v4.b32`. The cost was everything after it -- `PRMT 12.28 %` and `CS2R 6.09 %`,
+   which is `arith.extf` bf16->fp32 across 4096 tile elements every j-iteration, one PRMT
+   per element against a CS2R-materialised zero, plus a `#blocked -> #mma` layout
+   conversion. So the fix is not a better load; it is to stop widening.
+
+   Pre-scaling by `inv_ln2` on the host turns `(scoresT * sm_scale + b) * inv_ln2` into
+   `scoresT * (sm_scale * inv_ln2) + b2`, one FFMA where there were two multiplies and an
+   add. That also *reduces* rounding -- one FFMA plus two precomputed constants against
+   mul->add->mul.
+
+   The transpose is not cosmetic and not for coalescing: it is what lets a TMA descriptor
+   read the tile. `TensorDescriptor` asserts `strides[-1] == 1`, so TMA cannot describe a
+   transposed view, and `.T` on a *loaded* tile is only free when that tile feeds a wgmma
+   as an operand (point 1 above). The bias tile is added to an fp32 accumulator, so a
+   transpose there would lower to a real layout conversion -- reintroducing exactly what
+   this change removes. Storing `b2t` transposed means no transpose anywhere, and it
+   matches the `[bh, k, j]` layout `dbt` already uses.
+
+4. **That fp32 bias tile then goes through TMA** (`USE_TMA_BIAS`, gated host-side on
+   `USE_TMA_BWD_BIAS` and `not _is_fake`). Widening the tile made Triton stage it in
+   shared memory *from registers*; a descriptor writes shared memory straight from global
+   instead, so the store half disappears: `shared_st` 172.0 M -> 138.4 M instructions,
+   and spills 10 -> 4.
+
+   The measured gain is **not** where it was predicted, which is worth recording. `LDS`
+   did not fall -- it rose (397.9 M -> 509.3 M), because the tile still has to be read out
+   of shared memory into `#mma` and it is twice the bytes it used to be. What actually
+   improved is `IMAD`, 12.8 % -> 7.2 % of stall samples: almost all of that is
+   `IMAD.MOV.U32` register marshalling, which eases once the tile is no longer competing
+   for the register file. 39.81 -> 37.69 ms clock-locked, 7.34e9 -> 6.67e9 instructions.
+
+   This is also not an occupancy win, and never could have been: taking the tile out of
+   registers moves 255 -> ~239, against the <=170 that 3 CTAs/SM needs.
 """
 
 import triton
@@ -77,6 +118,50 @@ def _bwd_preprocess(
 
 
 @triton.jit
+def _bwd_bias_prep(
+    b_ptr, stride_bh, stride_bm, stride_bn,       # INPUT  [BH, N, N], (j, k)
+    b2t_ptr, stride_b2h, stride_b2k, stride_b2j,  # OUTPUT [BH, N, PADDED_N], (k, j)
+    N,
+    BLOCK: tl.constexpr,
+):
+    """b2t[h, k, j] = b[h, j, k] * inv_ln2, in fp32.
+
+    Transposes, widens and scales the bias in one pass so `_bwd_fused` can fold it in with
+    a single FFMA and no `extf`. See point 3 of the module docstring for why all three
+    happen here rather than in the kernel.
+
+    A tiled transpose, `[BLOCK, BLOCK]` per program: both the read and the write stay
+    coalesced along their own contiguous axis. Bandwidth bound and tiny -- 16 MB read plus
+    33 MB written at n=1024, against a ~40 ms kernel.
+
+    Only the valid `j < N` region is written; the caller allocates `b2t` with
+    `torch.zeros` so the `[N, PADDED_N)` columns stay zero. That padding exists for
+    16-byte row alignment, which a TMA descriptor over this buffer would require -- it is
+    *not* what makes `_bwd_fused`'s reads safe. `in_rangeT` is (see `_bwd_j_block`), and
+    it has to be: at `BLOCK_J=64, N=17` a j tile runs to 63, well past `PADDED_N = 32`,
+    and would otherwise read the next k row rather than any pad.
+    """
+    inv_ln2: tl.constexpr = 1.4426950408889634  # = 1.0 / ln(2)
+
+    pid_j = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    pid_h = tl.program_id(2)
+
+    j_idxs = pid_j * BLOCK + tl.arange(0, BLOCK)
+    k_idxs = pid_k * BLOCK + tl.arange(0, BLOCK)
+    mask_j = j_idxs < N
+    mask_k = k_idxs < N
+
+    b_ptrs = (b_ptr + pid_h * stride_bh
+              + j_idxs[:, None] * stride_bm + k_idxs[None, :] * stride_bn)  # [j,k]
+    b_block = tl.load(b_ptrs, mask_j[:, None] & mask_k[None, :]).to(tl.float32)
+
+    b2t_ptrs = (b2t_ptr + pid_h * stride_b2h
+                + k_idxs[:, None] * stride_b2k + j_idxs[None, :] * stride_b2j)  # [k,j]
+    tl.store(b2t_ptrs, tl.trans(b_block) * inv_ln2, mask_k[:, None] & mask_j[None, :])
+
+
+@triton.jit
 def _bwd_scale_cast(
     src_ptr, dst_ptr, scale, n_elem,
     BLOCK: tl.constexpr,
@@ -102,12 +187,14 @@ def _bwd_j_block(
     k_blk, v_blk, m_blk, mask_k,
     # Pointers, already advanced to start_j by the caller.
     q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
+    desc_b2t, bt_row,
     j_idxs, start_j,
-    sm_scale, neg_inf2, inv_ln2, N,
+    s2, neg_inf2, N,
     input_dtype: tl.constexpr,
     DIM: tl.constexpr, BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
     NEED_DB: tl.constexpr, NEED_DQ: tl.constexpr,
     J_MASKED: tl.constexpr, K_EXACT: tl.constexpr,
+    USE_TMA_BIAS: tl.constexpr,
 ):
     """One j-block of the backward, with every tile in `[k, j]` orientation.
 
@@ -146,19 +233,42 @@ def _bwd_j_block(
         row_max = tl.load(mx_ptrs)
         row_denom = tl.load(dn_ptrs)
         delta = tl.load(d_ptrs)
-    # The bias tile is the one load that needs `in_rangeT` rather than `mask_j`: it is
-    # indexed (j, k), so a ragged k tile reads past the end of the last bh slice.
-    if RANGED:
-        b_block = tl.load(bt_ptrs, in_rangeT).to(tl.float32)   # [k,j]
+    # Already fp32 and already scaled by inv_ln2 -- `_bwd_bias_prep` did both, which is
+    # where the old `.to(tl.float32)` here went (module docstring, point 3).
+    #
+    # This is still the one load that needs `in_rangeT` rather than `mask_j`, and the
+    # transpose makes it matter more, not less. `b2t` rows are `(bh, k)` and `PADDED_N`
+    # wide, so an out-of-range *j* no longer runs off the end of a row into padding -- it
+    # runs into the next k row. At `BLOCK_J=64, N=17` that is j up to 63 against a 32-wide
+    # row. `in_rangeT` is the only thing standing between that and a wrong answer; the
+    # zeroed pad is not (see `_bwd_bias_prep`). Out-of-range *k* still overruns the bh
+    # slice, as before.
+    #
+    # The unmasked branch is safe by construction: `RANGED=False` means the caller proved
+    # j + BLOCK_J <= n_full <= N and start_k + BLOCK_K <= N.
+    #
+    # The TMA path cannot mask at the load, so it does not: out-of-range lanes get either
+    # the zero fill (columns past PADDED_N) or a neighbouring slice's values (rows past
+    # this bh slice), and both are discarded by the `in_rangeT` select on `scoresT` below.
+    # That select already exists and is unconditional under `RANGED`, which is exactly how
+    # `_fwd` handles its own TMA bias box. It is a `tl.where`, not arithmetic, so even a
+    # NaN read cannot leak.
+    if USE_TMA_BIAS:
+        b_block = desc_b2t.load([bt_row, start_j])             # [k,j]
+    elif RANGED:
+        b_block = tl.load(bt_ptrs, in_rangeT)                  # [k,j]
     else:
-        b_block = tl.load(bt_ptrs).to(tl.float32)
+        b_block = tl.load(bt_ptrs)
 
     # dP^T does not depend on the score tile, so issue it first; scheduling it between
     # pT and dsT would put a third live [k,j] fp32 tile on the critical path.
     dpT = tl.dot(v_blk, tl.trans(do_block), input_precision="ieee")   # [k,j]
 
     scoresT = tl.dot(k_blk, tl.trans(q_block), input_precision="ieee")  # [k,j]
-    scoresT = (scoresT * sm_scale + b_block) * inv_ln2
+    # One FFMA. `s2` is sm_scale * inv_ln2 and `b_block` is already inv_ln2-scaled, so
+    # this is the old `(scoresT * sm_scale + b_block) * inv_ln2` with both constants
+    # folded -- and one rounding instead of three.
+    scoresT = scoresT * s2 + b_block
     # Substituting the sentinel after the log2 conversion, exactly as _fwd does. A
     # differently scaled sentinel makes exp2(scoresT - row_max) underflow on a fully
     # masked row and loses the documented mean(V) gradient.
@@ -222,13 +332,15 @@ def _bwd_j_block(
 def _bwd_j_loop(
     k_blk, v_blk, m_blk, mask_k,
     q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
-    stride_qn, stride_don, stride_bm, stride_ln, stride_dn, stride_dbtj, stride_dqj,
+    desc_b2t, bt_row,
+    stride_qn, stride_don, stride_b2j, stride_ln, stride_dn, stride_dbtj, stride_dqj,
     j_idxs,
-    sm_scale, neg_inf2, inv_ln2, N,
+    s2, neg_inf2, N,
     input_dtype: tl.constexpr,
     DIM: tl.constexpr, BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
     NEED_DB: tl.constexpr, NEED_DQ: tl.constexpr,
     K_EXACT: tl.constexpr,
+    USE_TMA_BIAS: tl.constexpr,
 ):
     """The whole j loop for one k tile, peeled, returning (dk, dv).
 
@@ -251,16 +363,18 @@ def _bwd_j_loop(
             dk, dv,
             k_blk, v_blk, m_blk, mask_k,
             q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
+            desc_b2t, bt_row,
             j_idxs, start_j,
-            sm_scale, neg_inf2, inv_ln2, N,
+            s2, neg_inf2, N,
             input_dtype,
             DIM, BLOCK_J, BLOCK_K,
             NEED_DB, NEED_DQ,
             J_MASKED=False, K_EXACT=K_EXACT,
+            USE_TMA_BIAS=USE_TMA_BIAS,
         )
         q_ptrs += BLOCK_J * stride_qn
         do_ptrs += BLOCK_J * stride_don
-        bt_ptrs += BLOCK_J * stride_bm
+        bt_ptrs += BLOCK_J * stride_b2j
         mx_ptrs += BLOCK_J * stride_ln
         dn_ptrs += BLOCK_J * stride_ln
         d_ptrs += BLOCK_J * stride_dn
@@ -275,12 +389,14 @@ def _bwd_j_loop(
             dk, dv,
             k_blk, v_blk, m_blk, mask_k,
             q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
+            desc_b2t, bt_row,
             j_idxs, n_full,
-            sm_scale, neg_inf2, inv_ln2, N,
+            s2, neg_inf2, N,
             input_dtype,
             DIM, BLOCK_J, BLOCK_K,
             NEED_DB, NEED_DQ,
             J_MASKED=True, K_EXACT=K_EXACT,
+            USE_TMA_BIAS=USE_TMA_BIAS,
         )
     return dk, dv
 
@@ -291,10 +407,11 @@ def _bwd_fused(
     q_ptr, stride_qh, stride_qm, stride_qn, stride_qd,
     k_ptr, stride_kh, stride_km, stride_kn, stride_kd,
     v_ptr, stride_vh, stride_vm, stride_vn, stride_vd,
-    b_ptr, stride_bh, stride_bm, stride_bn,
+    b2t_ptr, stride_b2h, stride_b2k, stride_b2j,
     mx_ptr, dn_ptr, stride_lh, stride_lm, stride_ln,
     m_ptr, stride_mh, stride_mm, stride_mn,
     do_ptr, stride_doh, stride_dom, stride_don, stride_dod,
+    desc_b2t,
     # OUTPUT
     dk_ptr, stride_dkh, stride_dkm, stride_dkn, stride_dkd,
     dv_ptr, stride_dvh, stride_dvm, stride_dvn, stride_dvd,
@@ -306,6 +423,7 @@ def _bwd_fused(
     CLOSEST_N: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
     NEED_DB: tl.constexpr, NEED_DQ: tl.constexpr,
+    USE_TMA_BIAS: tl.constexpr = False,
 ):
     """dq, dk, dv and db in one pass. Grid (cdiv(N, BLOCK_K), N, bh).
 
@@ -319,6 +437,17 @@ def _bwd_fused(
     scatter 4 bytes per lane. The caller transposes and casts it afterwards. `dq_ptr` is
     an fp32 accumulator in dq's own `[bh, i, j, d]` layout, so the epilogue only has to
     scale and cast it.
+
+    `desc_b2t` is a rank-2 TMA descriptor over the same `b2t`, viewed `[bh*N, PADDED_N]`
+    so a row is `(bh, k)` and a box is `[BLOCK_K, BLOCK_J]` at `[start_h*N + start_k,
+    start_j]`. Under `USE_TMA_BIAS` it replaces the pointer load; otherwise it is ignored
+    and may be any value (the host passes the tensor itself, as `_fwd` does). The box
+    shape has to match the selected config, which a per-config `pre_hook` rewrites --
+    see `autotune_bwd.py`.
+
+    `b2t_ptr` is the fp32, inv_ln2-scaled, `[bh, k, j]` bias that `_bwd_bias_prep` builds
+    -- the same orientation as `dbt_ptr`. Its last axis may be padded past N; the kernel
+    never relies on that, it only relies on the pad being zero. Module docstring, point 3.
     """
     input_dtype = q_ptr.dtype.element_ty
 
@@ -333,6 +462,9 @@ def _bwd_fused(
     inv_ln2: tl.constexpr = 1.4426950408889634  # = 1.0 / ln(2)
     # The sentinel in log2 units; see the triton.py module docstring.
     neg_inf2 = neg_inf * inv_ln2
+    # The score scale in log2 units. The bias carries its own inv_ln2 from
+    # `_bwd_bias_prep`, so the two together collapse the score epilogue to one FFMA.
+    s2 = sm_scale * inv_ln2
 
     # One mask per batch item, not repeated per head.
     mask_start_h = pid_h // H
@@ -357,11 +489,14 @@ def _bwd_fused(
     base_do_ptr = do_ptr + (start_h * stride_doh) + (start_i * stride_dom)
     do_ptrs = base_do_ptr + (j_idxs[:, None] * stride_don) + (d_idxs[None, :] * stride_dod)  # [j,d]
 
-    # The bias tile, read transposed. The contiguous axis (k) is the tile's row axis, so
-    # this coalesces into vector loads; a host-side pre-transposed copy measured no
-    # faster and costs a 33 MB pass.
-    bt_ptrs = (b_ptr + (start_h * stride_bh)
-               + (j_idxs[None, :] * stride_bm) + (k_idxs[:, None] * stride_bn))  # [k,j]
+    # Row of this CTA's bias box in the flattened [bh*N, PADDED_N] view the descriptor
+    # sees. Uses N, not PADDED_N: only the column pitch was padded.
+    bt_row = start_h * N + start_k
+
+    # The bias tile, read straight: `b2t` is already stored `[bh, k, j]`, so j -- the axis
+    # the loop walks -- is the contiguous one and each row of the tile is a vector load.
+    bt_ptrs = (b2t_ptr + (start_h * stride_b2h)
+               + (k_idxs[:, None] * stride_b2k) + (j_idxs[None, :] * stride_b2j))  # [k,j]
 
     l_off = (start_h * stride_lh) + (start_i * stride_lm) + (j_idxs * stride_ln)  # [j]
     mx_ptrs = mx_ptr + l_off
@@ -410,13 +545,15 @@ def _bwd_fused(
         dk, dv = _bwd_j_loop(
             k_blk, v_blk, m_blk, mask_k,
             q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
-            stride_qn, stride_don, stride_bm, stride_ln, stride_dn,
+            desc_b2t, bt_row,
+            stride_qn, stride_don, stride_b2j, stride_ln, stride_dn,
             stride_dbtj, stride_dqj,
             j_idxs,
-            sm_scale, neg_inf2, inv_ln2, N,
+            s2, neg_inf2, N,
             input_dtype,
             DIM, BLOCK_J, BLOCK_K,
             NEED_DB, NEED_DQ,
+            USE_TMA_BIAS=USE_TMA_BIAS,
             K_EXACT=True,
         )
         tl.store(dk_ptrs, (dk * sm_scale).to(input_dtype))
@@ -425,13 +562,15 @@ def _bwd_fused(
         dk, dv = _bwd_j_loop(
             k_blk, v_blk, m_blk, mask_k,
             q_ptrs, do_ptrs, bt_ptrs, mx_ptrs, dn_ptrs, d_ptrs, dbt_ptrs, dq_ptrs,
-            stride_qn, stride_don, stride_bm, stride_ln, stride_dn,
+            desc_b2t, bt_row,
+            stride_qn, stride_don, stride_b2j, stride_ln, stride_dn,
             stride_dbtj, stride_dqj,
             j_idxs,
-            sm_scale, neg_inf2, inv_ln2, N,
+            s2, neg_inf2, N,
             input_dtype,
             DIM, BLOCK_J, BLOCK_K,
             NEED_DB, NEED_DQ,
+            USE_TMA_BIAS=USE_TMA_BIAS,
             K_EXACT=False,
         )
         tl.store(dk_ptrs, (dk * sm_scale).to(input_dtype), mask_k[:, None])

@@ -13,6 +13,7 @@ The GPU is shared, so every timing run is gated on `require_idle_gpu`.
     python scripts/proto_bwd_fused.py check      # correctness matrix only
     python scripts/proto_bwd_fused.py bench      # config sweep at n=1024
     python scripts/proto_bwd_fused.py ablate     # price each fused piece
+    python scripts/proto_bwd_fused.py regs       # registers/spills/smem, compile only
 """
 
 import argparse
@@ -26,8 +27,17 @@ import triton
 import triton.testing
 from einops import rearrange
 
-from trifast.torch import MASK_FILL, _triangle_attention, triangle_attention_bwd
-from trifast.triton_bwd import _bwd_fused, _bwd_preprocess, _bwd_scale_cast
+from triton.tools.tensor_descriptor import TensorDescriptor
+
+import trifast.torch as trifast_torch
+from trifast.torch import MASK_FILL, USE_TMA_BWD_BIAS
+from trifast.torch import _triangle_attention, triangle_attention_bwd
+from trifast.triton_bwd import (
+    _bwd_bias_prep,
+    _bwd_fused,
+    _bwd_preprocess,
+    _bwd_scale_cast,
+)
 from trifast.utils import gen_tensors
 
 # ---------------------------------------------------------------- GPU guard
@@ -130,8 +140,11 @@ def flatten(t):
 DEFAULT_CFG = dict(BLOCK_J=64, BLOCK_K=64, num_warps=4, num_stages=3, maxnreg=None)
 
 
-def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None):
-    """Run preprocess -> fused -> cast. Returns (outputs, per-stage closures)."""
+def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None, no_tma_bias=False):
+    """Run preprocess -> fused -> cast. Returns (outputs, per-stage closures).
+
+    `no_tma_bias` forces the pointer bias load so `bench` can A/B the TMA path.
+    """
     n, h, d, bs, dtype = inp["n"], inp["h"], inp["d"], inp["bs"], inp["dtype"]
     q, k, v, b = (flatten(inp[x]) for x in ("q", "k", "v", "b"))
     o, mx, dn, do = (flatten(inp[x]) for x in ("o", "mx", "dn", "do"))
@@ -151,6 +164,26 @@ def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None):
     dq_acc = torch.zeros((bh, n, n, d), dtype=torch.float32, device=q.device)
     s_dq_j, s_dq_d = dq_acc.stride(2), dq_acc.stride(3)
     dq = torch.empty_like(q)
+    # The fp32, inv_ln2-scaled, [bh, k, j] bias, padded for 16-byte row alignment.
+    padded_n = triton.cdiv(n, 16) * 16
+    b2t = torch.zeros((bh, n, padded_n), dtype=torch.float32, device=q.device)
+    # This harness launches the bare `_bwd_fused` with a pinned config, so no config
+    # pre_hook runs -- unlike the autotuned path, the box has to be set here, to match
+    # what _bwd_descriptor_pre_hook would have written.
+    use_tma_bias = USE_TMA_BWD_BIAS and not no_tma_bias
+    if use_tma_bias:
+        desc_b2t = TensorDescriptor.from_tensor(
+            b2t.reshape(bh * n, padded_n), block_shape=[BK, BJ]
+        )
+    else:
+        desc_b2t = b2t
+
+    def run_bias_prep():
+        _bwd_bias_prep[(triton.cdiv(n, 32), triton.cdiv(n, 32), bh)](
+            b, b.stride(0), b.stride(1), b.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
+            n, BLOCK=32, num_warps=4,
+        )
 
     def run_pre():
         _bwd_preprocess[(triton.cdiv(n, 64), n, bh)](
@@ -166,10 +199,11 @@ def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None):
             q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            b, b.stride(0), b.stride(1), b.stride(2),
+            b2t, b2t.stride(0), b2t.stride(1), b2t.stride(2),
             mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
             mask, mask.stride(0), mask.stride(1), mask.stride(2),
             do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            desc_b2t,
             dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
             dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
             dbt, dbt.stride(0), dbt.stride(1), dbt.stride(2),
@@ -178,6 +212,7 @@ def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None):
             N=n, H=h, DIM=d, CLOSEST_N=CLOSEST_N,
             BLOCK_J=BJ, BLOCK_K=BK,
             NEED_DB=need_db, NEED_DQ=need_dq,
+            USE_TMA_BIAS=use_tma_bias,
             num_warps=cfg["num_warps"],
             num_stages=stages if stages is not None else cfg["num_stages"],
             maxnreg=cfg.get("maxnreg"),
@@ -193,20 +228,22 @@ def launch_fused(inp, cfg, need_db=True, need_dq=True, stages=None):
         return dbt.transpose(1, 2).contiguous().to(dtype)
 
     def run_all():
+        run_bias_prep()
         run_pre()
         run_fused()
         run_cast()
         run_db_cast()
 
     outs = dict(dq=dq, dk=dk, dv=dv, dbt=dbt, dq_acc=dq_acc, delta=delta)
-    stages_d = dict(pre=run_pre, fused=run_fused, cast=run_cast,
-                    db_cast=run_db_cast, all=run_all)
+    stages_d = dict(bias_prep=run_bias_prep, pre=run_pre, fused=run_fused,
+                    cast=run_cast, db_cast=run_db_cast, all=run_all)
     return outs, stages_d
 
 
 def fused_grads(inp, cfg, **kw):
     """Materialize the four gradients through the fused path, in [b, h, ...] layout."""
     outs, st = launch_fused(inp, cfg, **kw)
+    st["bias_prep"]()
     st["pre"]()
     st["fused"]()
     st["cast"]()
@@ -217,10 +254,20 @@ def fused_grads(inp, cfg, **kw):
 
 
 def ref_grads(inp):
-    dq, dk, dv, db, _ = triangle_attention_bwd(
-        inp["do"], inp["q"], inp["k"], inp["v"], inp["b"],
-        inp["o"], inp["mx"], inp["dn"], inp["mask"],
-    )
+    """The three-kernel path, forced.
+
+    `USE_FUSED_BWD` defaults to True, so without this override the "reference" was the
+    fused path and `check` was comparing it against itself.
+    """
+    previous = trifast_torch.USE_FUSED_BWD
+    trifast_torch.USE_FUSED_BWD = False
+    try:
+        dq, dk, dv, db, _ = triangle_attention_bwd(
+            inp["do"], inp["q"], inp["k"], inp["v"], inp["b"],
+            inp["o"], inp["mx"], inp["dn"], inp["mask"],
+        )
+    finally:
+        trifast_torch.USE_FUSED_BWD = previous
     return dq, dk, dv, db
 
 
@@ -278,9 +325,18 @@ def cmd_bench(args):
     require_idle_gpu()
     n, h, d = args.n, 8, 32
     inp = make_inputs(n, h, d, torch.bfloat16, mask_mode="random")
-    ref = lambda: triangle_attention_bwd(
-        inp["do"], inp["q"], inp["k"], inp["v"], inp["b"],
-        inp["o"], inp["mx"], inp["dn"], inp["mask"])
+    # Force the three-kernel path: USE_FUSED_BWD defaults to True, so this used to time
+    # the fused path and label it "reference".
+    def ref():
+        previous = trifast_torch.USE_FUSED_BWD
+        trifast_torch.USE_FUSED_BWD = False
+        try:
+            return triangle_attention_bwd(
+                inp["do"], inp["q"], inp["k"], inp["v"], inp["b"],
+                inp["o"], inp["mx"], inp["dn"], inp["mask"])
+        finally:
+            trifast_torch.USE_FUSED_BWD = previous
+
     ref(); torch.cuda.synchronize()
     ref_ms = triton.testing.do_bench(ref, warmup=100, rep=500, quantiles=[0.5])
     print(f"reference three-kernel path (incl. rearrange): {ref_ms:.2f} ms\n")
@@ -299,24 +355,30 @@ def cmd_bench(args):
         dict(BLOCK_J=64, BLOCK_K=128, num_warps=4, num_stages=2, maxnreg=None),
     ]
     hdr = (f"{'BJ':>4}{'BK':>4}{'w':>3}{'s':>3}{'nreg':>6}{'fused':>9}{'pre':>7}"
-           f"{'cast':>7}{'total':>8}{'vs ref':>8}{'regs':>6}{'spill':>6}{'smem':>8}")
+           f"{'bias':>7}{'cast':>7}{'total':>8}{'vs ref':>8}{'regs':>6}{'spill':>6}"
+           f"{'smem':>8}")
     print(hdr)
     best = None
-    for cfg in sweep:
+    for cfg in sweep + [dict(c, _no_tma_bias=True) for c in sweep[:2]]:
+        no_tma = cfg.pop("_no_tma_bias", False)
         try:
-            outs, st = launch_fused(inp, cfg)
+            outs, st = launch_fused(inp, cfg, no_tma_bias=no_tma)
             st["all"](); torch.cuda.synchronize()
             ms_f = triton.testing.do_bench(st["fused"], warmup=100, rep=400, quantiles=[0.5])
             ms_p = triton.testing.do_bench(st["pre"], warmup=20, rep=100, quantiles=[0.5])
             ms_c = triton.testing.do_bench(st["cast"], warmup=20, rep=100, quantiles=[0.5])
             ms_d = triton.testing.do_bench(st["db_cast"], warmup=20, rep=100, quantiles=[0.5])
+            ms_b = triton.testing.do_bench(st["bias_prep"], warmup=20, rep=100, quantiles=[0.5])
             meta = last_meta(_bwd_fused)
-            total = ms_f + ms_p + ms_c + ms_d
+            total = ms_f + ms_p + ms_c + ms_d + ms_b
             print(f"{cfg['BLOCK_J']:>4}{cfg['BLOCK_K']:>4}{cfg['num_warps']:>3}"
                   f"{cfg['num_stages']:>3}{str(cfg['maxnreg']):>6}{ms_f:>9.2f}{ms_p:>7.2f}"
-                  f"{ms_c + ms_d:>7.2f}{total:>8.2f}{ref_ms / total:>7.2f}x"
-                  f"{meta.n_regs:>6}{meta.n_spills:>6}{meta.metadata.shared:>8}")
-            if best is None or total < best[0]:
+                  f"{ms_b:>7.2f}{ms_c + ms_d:>7.2f}{total:>8.2f}{ref_ms / total:>7.2f}x"
+                  f"{meta.n_regs:>6}{meta.n_spills:>6}{meta.metadata.shared:>8}"
+                  f"{'  pointer-bias' if no_tma else ''}")
+            # The pointer-bias rows are an A/B, not candidates -- they would otherwise win
+            # the `best` line without the label that says what they are.
+            if not no_tma and (best is None or total < best[0]):
                 best = (total, cfg)
         except Exception as e:  # noqa: BLE001 - a throwaway harness
             print(f"{cfg['BLOCK_J']:>4}{cfg['BLOCK_K']:>4}{cfg['num_warps']:>3}"
@@ -341,12 +403,48 @@ def cmd_ablate(args):
         print(f"  {'variant':<26}{'ms':>9}{'regs':>6}{'spill':>6}{'smem':>8}")
         for name, kw in variants:
             outs, st = launch_fused(inp, cfg, **kw)
-            st["fused"](); torch.cuda.synchronize()
+            st["bias_prep"](); st["fused"](); torch.cuda.synchronize()
             ms = triton.testing.do_bench(st["fused"], warmup=100, rep=400, quantiles=[0.5])
             meta = last_meta(_bwd_fused)
             print(f"  {name:<26}{ms:>9.2f}{meta.n_regs:>6}{meta.n_spills:>6}"
                   f"{meta.metadata.shared:>8}")
     report_gpu_after("ablate")
+
+
+def cmd_regs(args):
+    """Compile-only resource report: registers, spills, shared memory, CTAs/SM.
+
+    Register pressure is a function of the constexprs, not of N, so this compiles at a
+    tiny shape and takes seconds rather than the minutes `bench` needs. It is the gate for
+    anything that wants to spend registers -- BLOCK_I > 1 costs 32 reg/thread per extra i
+    (a second dk and dv accumulator), and 2 CTAs/SM at 128 threads allows only
+    65536 / (2 * 128) = 256.
+    """
+    inp = make_inputs(64, 2, 32, torch.bfloat16, mask_mode="random")
+    variants = [
+        ("everything", {}),
+        ("no db atomic", dict(need_db=False)),
+        ("no dq atomic", dict(need_dq=False)),
+        ("dk/dv only", dict(need_db=False, need_dq=False)),
+    ]
+    print(f"{'BJ':>4}{'BK':>4}{'w':>3}{'s':>3}  {'variant':<16}"
+          f"{'regs':>6}{'spill':>6}{'smem':>8}{'CTA/SM':>8}{'headroom':>9}")
+    for cfg in (dict(BLOCK_J=64, BLOCK_K=64, num_warps=4, num_stages=2, maxnreg=None),
+                dict(BLOCK_J=64, BLOCK_K=64, num_warps=4, num_stages=3, maxnreg=None),
+                dict(BLOCK_J=32, BLOCK_K=64, num_warps=4, num_stages=2, maxnreg=None)):
+        for name, kw in variants:
+            _outs, st = launch_fused(inp, cfg, **kw)
+            st["fused"]()
+            torch.cuda.synchronize()
+            m = last_meta(_bwd_fused)
+            threads = cfg["num_warps"] * 32
+            by_reg = 65536 // (m.n_regs * threads)
+            by_smem = 233472 // max(m.metadata.shared, 1)
+            # Registers spare before dropping below the CTAs/SM we have today.
+            cap = 65536 // (max(by_reg, 1) * threads)
+            print(f"{cfg['BLOCK_J']:>4}{cfg['BLOCK_K']:>4}{cfg['num_warps']:>3}"
+                  f"{cfg['num_stages']:>3}  {name:<16}{m.n_regs:>6}{m.n_spills:>6}"
+                  f"{m.metadata.shared:>8}{min(by_reg, by_smem):>8}{cap - m.n_regs:>9}")
 
 
 def last_meta(kern):
@@ -357,10 +455,11 @@ def last_meta(kern):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("cmd", choices=["check", "bench", "ablate"])
+    p.add_argument("cmd", choices=["check", "bench", "ablate", "regs"])
     p.add_argument("-n", type=int, default=1024)
     args = p.parse_args()
-    {"check": cmd_check, "bench": cmd_bench, "ablate": cmd_ablate}[args.cmd](args)
+    {"check": cmd_check, "bench": cmd_bench, "ablate": cmd_ablate,
+     "regs": cmd_regs}[args.cmd](args)
 
 
 if __name__ == "__main__":

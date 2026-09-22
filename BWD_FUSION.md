@@ -6,7 +6,7 @@ The backward ran three kernels — `_bwd_q` (dq + delta), `_bwd_kv` (dk, dv), `_
 softmax epilogues where five and one would do.** `_bwd_b` existed only because `db` is a
 reduction over the triangle axis `i`, which the other two kernels carry in their grid.
 
-`src/trifast/triton_bwd.py` replaces all three with one kernel plus two memory-bound
+`src/trifast/triton_bwd.py` replaces all three with one kernel plus three memory-bound
 passes. Repro:
 
 ```
@@ -15,6 +15,10 @@ python scripts/proto_bwd_fused.py check            # correctness matrix vs the o
 python scripts/proto_bwd_fused.py bench | ablate    # config sweep, per-piece cost
 pytest tests/unit/test_bwd_fused.py                # 32 cases, fused vs three-kernel
 ```
+
+`bench` sweeps the TMA bias path and repeats the top two configs with the pointer load
+(marked `pointer-bias`), so the last two rows are the A/B for point 4 below.
+`trifast.torch.USE_TMA_BWD_BIAS` flips it globally.
 
 Every timing below was taken on an idle GPU — this device is shared, and
 `scripts/bench_kernels.py` now refuses to measure if anyone else is using it.
@@ -26,24 +30,40 @@ TriFast backward algorithmic throughput — BF16 (TFLOP/s)
 ┌──────┬───────────────┬───────┬─────────┐
 │  N   │ Three kernels │ Fused │ Speedup │
 ├──────┼───────────────┼───────┼─────────┤
-│  512 │         41.57 │ 62.43 │   1.50x │
-│  640 │         42.69 │ 64.45 │   1.51x │
-│  768 │         43.14 │ 65.47 │   1.52x │
-│  800 │         40.76 │ 60.10 │   1.47x │
-│ 1024 │         43.99 │ 67.60 │   1.54x │
+│  512 │         41.64 │ 71.14 │   1.71x │
+│  640 │         42.68 │ 72.89 │   1.71x │
+│  768 │         43.16 │ 74.20 │   1.72x │
+│  800 │         40.77 │ 65.98 │   1.62x │
+│ 1024 │         44.00 │ 76.23 │   1.73x │
 └──────┴───────────────┴───────┴─────────┘
 ```
 
-End to end, allocations and both helper passes included. Both columns are counted against
-the same five matmuls -- the work a backward *has* to do -- so they compare how fast each
-path delivers the same gradients rather than how fast it runs its own instruction mix; the
-three-kernel path performs nine. In wall clock: **62.5 -> 40.7 ms at n=1024**, of which the
-fused kernel is 39.7 ms, the delta preprocess 0.26 and the dq cast plus db transpose 0.46.
+The `Fused` column includes the fp32 bias pre-pass and its TMA read, both described in
+[The bias tile](#the-bias-tile-and-why-the-first-read-of-this-profile-was-wrong). The
+progression at n=1024, each step measured against the same reference:
+
+| | n=1024 fused | speedup |
+| --- | --- | --- |
+| original | 67.60 | 1.54x |
+| + fp32 pre-scaled, pre-transposed bias | 73.44 | 1.67x |
+| + TMA on that bias | **76.23** | **1.73x** |
+
+The `Three kernels` column is untouched across all three runs (43.99 → 44.02 → 44.00 at
+n=1024), which is the sanity check that the reference did not drift.
+
+End to end, allocations and all three helper passes included. Both columns are counted
+against the same five matmuls -- the work a backward *has* to do -- so they compare how
+fast each path delivers the same gradients rather than how fast it runs its own instruction
+mix; the three-kernel path performs nine. In wall clock: **62.4 -> 35.4 ms at n=1024**, of
+which the fused kernel is 34.7 ms, the delta preprocess 0.26, the dq cast plus db transpose
+0.46, and the bias pre-pass 0.02.
 
 `n=800` gains least for the same reason the forward does: `800 % 64 == 32` leaves a ragged
 tile that still pays for masking.
 
-**Why 1.54x and not the 1.8x that 9 → 5 matmuls implies.** The three kernels together
+**Why 1.54x and not the 1.8x that 9 → 5 matmuls implies.** (This section predates the fp32
+bias change, which took the ratio to 1.67x; the accounting below still explains where the
+remaining gap comes from.) The three kernels together
 sustain 79.2 TFLOP/s over the 9 matmuls they actually perform — which is where the table's
 43.99 comes from, `79.2 × 5/9` — while the fused kernel sustains 69.1 over its 5. That
 12.5 % lower per-matmul efficiency is the atomics (additive, see below) and the register
@@ -99,18 +119,24 @@ shape.
 
 ## What each piece costs
 
-At BLOCK_J = BLOCK_K = 64, `num_warps=4`, `num_stages=2`:
+`proto_bwd_fused.py ablate` prices each gradient by flipping its constexpr off. It sweeps
+`num_stages=2`, so these are **not** at the shipping config (`num_stages=3`) — they are
+internally comparable, not comparable to the totals above. At
+BLOCK_J = BLOCK_K = 64, `num_warps=4`, `num_stages=2`, with the fp32 TMA bias:
 
 | | ms | Δ | reg |
 | --- | --- | --- | --- |
-| dk + dv (4 matmuls) | 26.02 | — | 211 |
-| + db atomic | 31.88 | +5.86 | 232 |
-| + dq (5th matmul and its atomic) | 39.77 | +7.89 | 250 |
-| …with dq in the transposed orientation | 45.08 | +5.31 | 255, 18 spills |
-| …without the peeled fast path | 42.39 | +2.62 | 255 |
+| dk + dv (4 matmuls) | 22.51 | — | 246 |
+| + db atomic | 31.66 | +9.15 | 242 |
+| + dq (5th matmul and its atomic) | 37.91 | +6.25 | 255, 10 spills |
 
-Both fusions pay for themselves several times over: db costs 5.86 ms and deletes a 15.10 ms
-kernel; dq costs 7.89 ms and deletes a 16.78 ms one.
+Both fusions still pay for themselves several times over: db deletes a 15.10 ms kernel and
+dq a 16.78 ms one. The pre-bias numbers, for reference, were 26.02 / 31.88 / 39.77 — so the
+bias change is worth ~3.5 ms on the dk/dv base alone, before any gradient is added.
+
+Two results from the original sweep that the bias change does not affect, kept because they
+are the reason the kernel is shaped the way it is: dq in the transposed orientation cost
++5.31 ms (255 regs, 18 spills), and dropping the peeled fast path cost +2.62 ms.
 
 ## Atomics
 
@@ -218,31 +244,216 @@ l1tex__t_sectors_pipe_lsu_mem_global_op_red.sum  1,610,612,736   -> 51.5 GB of L
 is 51.5 GB with **zero** amplification — perfectly coalesced, entirely L2-resident. Nothing
 to win on the addressing side; the only lever is issuing more warps so it overlaps.
 
+## The bias tile, and why the first read of this profile was wrong
+
+Everything above this section was derived from `--set full` section summaries. Those say
+the kernel is latency bound and point at occupancy, which is true but not actionable. Adding
+**PC sampling** (`--section SourceCounters --import-source yes`) attributes stalls to
+individual instructions, and it puts **22.95 % of all not-issued samples on a single line**:
+the bias load.
+
+```
+ncu --kernel-name regex:_bwd_fused --launch-skip 1 --launch-count 1 \
+    --section SourceCounters --import-source yes -o bwd_src -f \
+    python scripts/ncu_kernels.py bwd_fused -n 1024
+```
+
+| line | % stalls | dominant opcodes |
+| --- | --- | --- |
+| `b_block = tl.load(bt_ptrs).to(tl.float32)` | **22.95** | PRMT 12.28, CS2R 6.09, STS 1.62, **LDG 0.45** |
+| `dq_tile = tl.dot(tl.trans(ds16), k_blk)` | 14.76 | WARPGROUP 14.11 |
+| `tl.atomic_add(dbt_ptrs, dsT, ...)` | 12.73 | **IMAD.MOV 9.52**, STS 1.27, REDG 0.86 |
+| `dpT = tl.dot(v_blk, tl.trans(do_block))` | 12.40 | WARPGROUP |
+| `ds16 = dsT.to(input_dtype)` | 8.26 | F2FP 3.79, STSM 2.24, LDSM 2.24 |
+| `scoresT = tl.dot(k_blk, tl.trans(q_block))` | 7.42 | WARPGROUP |
+| `tl.atomic_add(dq_ptrs, dq_tile, ...)` | 5.68 | |
+
+**`LDG` is 0.45 %.** The load was never the problem — the "not worth investigating" entry
+that measured its coalescing was right about coalescing and wrong about the conclusion. The
+cost sat between the load and the FMA: `arith.extf` bf16→fp32 over 4096 tile elements
+every j-iteration, one `PRMT` per element against a `CS2R`-materialised zero, plus a
+`#blocked → #mma` layout conversion. 18.4 % of the kernel, in two opcodes that do no
+arithmetic at all.
+
+So `_bwd_bias_prep` widens, scales and transposes the bias once, host-side, into
+`b2t[bh, k, j]` fp32 (+33 MB, 0.02 ms). Pre-scaling by `inv_ln2` also collapses
+`(scoresT * sm_scale + b) * inv_ln2` into one FFMA. Measured A/B in one session on an idle
+GPU, `BLOCK_J = BLOCK_K = 64`, `num_warps = 4`:
+
+| | bf16 bias | fp32 pre-scaled | |
+| --- | --- | --- | --- |
+| best config | s2, **40.55 ms** | s3, **36.53 ms** | **−9.9 %** |
+| end to end, all passes | 41.28 ms | 37.28 ms | −9.7 % |
+| clock-locked (ncu) | 44.10 ms | 39.81 ms | |
+| registers / spills | 255 / 0 | 255 / 10 | |
+| FMUL per score element | 3.03 | **2.03** | exactly as predicted |
+| total instructions | 7.73e9 | 7.34e9 | −5.0 % |
+| SM throughput | 47.4 % | 52.5 % | |
+
+And the mechanism, by stall share, with the TMA step (below) in the third column:
+
+| opcode | before | fp32 bias | + TMA |
+| --- | --- | --- | --- |
+| PRMT | 12.28 % | **0.00 %** | 0.00 % |
+| CS2R | 6.17 % | **0.05 %** | 0.07 % |
+| F2FP | 3.91 % | 0.33 % | 0.45 % |
+| **IMAD** | 12.70 % | 12.82 % | **7.16 %** |
+| STS | 5.90 % | 4.47 % | 5.46 % |
+| **LDS** | 5.18 % | **13.36 %** | 13.48 % |
+| WARPGROUP | 28.82 % | 26.41 % | 28.08 % |
+
+The widening is gone outright. **The trade is `LDS`**: an fp32 tile is twice the bytes, so
+Triton stages it in shared memory instead of shuffling it in registers — which is also why
+`num_stages` flipped from 2 to 3 (the fp32 tile makes deeper pipelining pay; see
+`autotune_bwd.py`) and why shared memory went 42 → 71 KB. Registers stay pinned at 255, so
+the extra stage costs no occupancy.
+
+### Then TMA on the same buffer
+
+`b2t` is stored `[bh, k, j]` precisely so a descriptor can read it: `TensorDescriptor`
+asserts `strides[-1] == 1`, so TMA cannot describe a transposed view, and `.T` on this tile
+is not free the way it is on a wgmma operand (it feeds an fp32 add, not a wgmma). A rank-2
+descriptor over `b2t.reshape(bh*N, PADDED_N)` with a `[BLOCK_K, BLOCK_J]` box, offset
+`[start_h*N + start_k, start_j]`, does it with no transpose anywhere. **34.70 ms against
+36.59 at the same config, −5.2 %**, and spills 10 → 4.
+
+**It did not work the way it was predicted to, which is the part worth keeping.** The
+theory was that TMA removes the `LDS` traffic above. It does not: `LDS` *rose*, 397.9 M →
+509.3 M instructions, because the tile still has to be read out of shared memory into
+`#mma` and is twice the bytes it used to be. What TMA actually removed was the *store* half
+— `shared_st` 172.0 M → 138.4 M — and, mostly, `IMAD`: 12.8 % → 7.2 % of stall samples,
+nearly all `IMAD.MOV.U32` register marshalling, which eases once the tile stops competing
+for the register file. Total instructions 7.34e9 → 6.67e9, 39.81 → 37.69 ms clock-locked.
+
+Three implementation traps, all of which bite silently:
+
+1. **Attach the box pre-hook per config (`config.pre_hook`), never `autotune(pre_hook=…)`.**
+   Triton installs the `reset_to_zero` hook only when the constructor's `pre_hook` is None,
+   so passing one stops `dbt`/`dq` being zeroed between autotune trials — a ~400x wrong
+   answer, which is what `test_autotuning_does_not_corrupt_the_accumulators` guards.
+2. **A stale on-disk config entry can come back without its pre-hook** and launch the
+   placeholder box. `autotune.py` re-identifies the live `Config` to restore the
+   non-serializable hook, but only if it still matches one; invalidate the cache when the
+   config list changes.
+3. **The traced/fake path must keep the pointer load.** Fake tensors cannot build a
+   tensormap, and that path launches the bare kernel with `pinned_bwd_fused_config`, where
+   no config pre-hook runs at all. `scripts/proto_bwd_fused.py` has the same problem for
+   the same reason and sets the box by hand.
+
+Two notes for whoever profiles this next. At `num_stages=3` ptxas reorders hard enough that
+**line-level attribution smears** — 48.6 % of samples land on the softmax line and 24.5 % on
+the loop header, which is where the scheduler parks its waits, not where the work is. Compare
+opcodes, not lines. And the db atomic's 12.73 % is **`IMAD.MOV.U32`, not memory**: 201 M
+register moves, because `REDG.ADD.F32.128` wants data and address contiguous and at 255
+registers ptxas has no allocation freedom. The atomic micro-benchmark below measures the
+traffic correctly; the traffic is not the cost.
+
+## The decomposition is at a local optimum, and there is a conservation law
+
+Worth writing down, because the 14 ms of atomics is the obvious thing to attack and three of
+the obvious attacks are provably dead.
+
+A CTA tiles two of the three axes `(j, k, i)` and *loops* the third. The looped axis's
+gradient reduces inside registers and is free; the other two are split across CTAs and must be
+atomic. With `E_g` elements and `R_g` contributing CTAs per gradient, updates are `E_g · R_g`:
+
+| gradient | elements | contributing CTAs | updates |
+| --- | --- | --- | --- |
+| `db[j,k]` | `bh·n²` | `n/IC` | `bh·n³/IC` |
+| `dq[i,j,:]` | `bh·n²·D` | `n/BK` | `bh·n³·D/BK` |
+| `dk`,`dv[i,k,:]` | `bh·n²·D` each | `n/BJ` | `2·bh·n³·D/BJ` |
+
+`T = bh·n³ · (1/IC + D/BK + 2D/BJ)`, minus the looped axis's term. At `D=32, BJ=BK=64, IC=1`:
+
+| CTA loops | free | pays | `T / bh·n³` | fp32 scratch |
+| --- | --- | --- | --- | --- |
+| **j** (shipped) | dk, dv | dq 0.5 + db 1.0 | **1.5** | 1.1 GB |
+| i (`_bwd_b`'s shape) | db | dq 0.5 + dk,dv 1.0 | **1.5** | 3.2 GB |
+| k | dq | dk,dv 1.0 + db 1.0 | 2.0 | 2.2 GB |
+
+**Making `db` free costs exactly what `db` cost.** The two candidates tie at 12.9e9 updates and
+the shipped one wins on scratch. The law is tight enough that hybrids do not escape it either:
+covering two `i` per CTA but atomically reducing `dk`/`dv` for the second one trades 4.3e9 db
+updates for 4.3e9 dk/dv updates, exactly.
+
+**Persistent scheduling does not help.** `T` counts (CTA, output-element) incidences, which the
+tiling fixes — not the launch shape. Its only effects here would be launch-overhead
+amortisation (131,072 CTAs over 40 ms, noise) and L2 locality (already 95.6 % hit). It is only
+a vehicle for register accumulation across `i`, and an inner loop is a simpler vehicle.
+
+**`BLOCK_I > 1` is the one term that is not conserved, and it is register-dead.** Driving
+`1/IC` down would cut atomics 33 % at IC=2 (12.885e9 → 8.590e9) *and* load sectors 24 %
+(1.159e9 → 0.889e9, since the bias tile is i-invariant and is half the 16.75 KB loaded per
+j-iteration) — worth ~2.9 ms. It needs `IC` copies of the `dk`/`dv` accumulators, which are
+live values that cannot be rematerialised. Measured, by keeping a second accumulator pair live
+across the j loop at `BJ=BK=64, w4, s2`:
+
+| | regs | spills |
+| --- | --- | --- |
+| dk/dv only, one pair (baseline) | 222 | 0 |
+| dk/dv only, **two pairs** | 252 | 0 |
+| everything, one pair (shipped) | **255** | 0 |
+| everything, **two pairs** | 255 | **22** |
+| everything − db atomic, two pairs | 255 | **8** |
+
+The second pair costs **+30 registers**, and 2 CTAs/SM at 128 threads allows only
+`65536/(2·128) = 256`. So IC=2 spills at the fast config *even if* the db atomic were removed
+entirely — and removing it is worth only 12 registers (255 → 243), not the 64 that sizing
+`dbt_ptrs` as an i64 tile would suggest; the compiler strength-reduces it. `BLOCK_J=32` does fit
+(226 → 238, no spills) but starts 8.75 ms behind (49.30 vs 40.55 ms), which is more than IC=2
+can return. **Do not re-attempt this without first finding ~32 registers elsewhere.**
+
 ## Leads, in descending value
 
-1. **TMA for the loop-carried tiles.** A `[DIM, BLOCK_J]` 64-bit pointer tensor is 32
-   registers per thread on its own, and this kernel carries several. Every load is in the
-   natural orientation with only `tl.trans` applied afterwards, so the forward's descriptor
-   machinery applies directly. This is the one lever likely to move 250 registers, and
-   registers are what the atomics need in order to hide.
-2. **`BLOCK_I = 2`** — one CTA covering two `i` values halves the db atomic count *and*
-   halves the bias re-read (17.2 GB → 8.6 GB; the forward priced the bias load at 8.4 %).
-   It needs a second dk/dv accumulator pair, so it is only viable at BLOCK_J=32.
-3. **Gate db on `ctx.needs_input_grad`.** `NEED_DB` is already a constexpr; threading it
-   through would hand back the whole 5.86 ms whenever the bias needs no gradient.
-4. **The duplicated j loop costs 0.8 ms.** `_bwd_fused` instantiates `_bwd_j_loop` twice, on
+1. **Gate db on `ctx.needs_input_grad`.** `NEED_DB` is already a constexpr; threading it
+   through hands back the whole 5.86 ms whenever the bias needs no gradient. No register cost,
+   no numerical change — the best remaining lead by a distance.
+2. **The duplicated j loop costs 0.8 ms.** `_bwd_fused` instantiates `_bwd_j_loop` twice, on
    a uniform branch over whether this CTA's k tile is ragged, which is worth 2.6 ms but
    costs 0.8 in code size and register pressure. A cheaper way to specialize would net the
    difference.
+3. ~~**TMA on `b2t`.**~~ **Done** — see [Then TMA on the same
+   buffer](#then-tma-on-the-same-buffer). Worth −5.2 %. The entry this replaces predicted
+   the win would come from removing `LDS`; it came from `IMAD` register marshalling
+   instead, and `LDS` went up.
+4. **The wgmma drains.** `WARPGROUP` is 28.1 % of stalls, in three
+   `WARPGROUP.DEPBAR.LE gsb0, 0x0` per j-iteration — one after `dpT`, one after `scoresT`,
+   one after `dq_tile`, each draining to zero outstanding. `dpT` and `scoresT` are
+   independent and never overlap. The source already issues them adjacently and consumes
+   them late, so there is no obvious source-level fix; this is a Triton pipelining question
+   or a Gluon one.
+5. **Shared-memory accumulators are the real ceiling, and Triton cannot express them.** Shared
+   memory is less idle than it was — 71 KB of 233 KB at `num_stages=3` — but a `dk`/`dv`
+   accumulator bank in smem would make `IC=4-8` free of register cost, which is where the
+   atomics actually collapse. `allocate_shared_memory` exists in this Triton's Gluon frontend
+   (`triton/experimental/gluon/language/_core.py:487`), at the cost of hand-written layouts and
+   pipelining on an experimental API. Cluster/DSMEM reduction of `db` is *not* available even
+   there — Gluon's Hopper cluster surface is only `arrive`/`wait`
+   (`.../nvidia/hopper/cluster.py`), with no remote-shared addressing or cluster reduction.
 
 ## Not worth investigating
 
 - **DRAM.** The fused kernel moves ~4.3 GB at n=1024 against a 40 ms runtime.
-- **The bias transposed load.** `jj[None,:]*N + kk[:,None]` already coalesces into
-  `ld.global.v4.b32`; a host-side pre-transposed copy measured no faster and costs a pass.
+- **Pointer arithmetic, including the rank-2 pointer tensors.** Real 64-bit address math
+  (`IMAD.WIDE`) is **0.47 %** of stall samples. The `IMAD` line in the tables above looks
+  alarming at 7–13 %, but it is almost entirely `IMAD.MOV.U32` — register moves issued on
+  the FMA pipe, i.e. a register-pressure symptom, not addressing. Nothing to win by
+  reshaping how the pointers are built.
+- **The atomics' memory traffic.** `REDG` itself is 1.9–2.9 % of stalls, DRAM is 2.6 %, L2
+  hit is 95.6 %, and the sector count shows zero amplification. The db atomic's 12.7 % is
+  the `IMAD.MOV` marshalling above, because `REDG.ADD.F32.128` needs data and address
+  contiguous and at 255 registers ptxas has no freedom to place them.
 - **The mask.** In this orientation `mask[i, k]` is loop-invariant, so it is one `[k]` load
   per CTA rather than one per iteration, and its `[:, None]` broadcast is split across warps
   rather than replicated. The forward's 32x LDG amplification simply does not arise.
+- ~~**The bias transposed load.**~~ and ~~**Keeping the bias tile in bf16 into the
+  FMA.**~~ **Both of these were wrong, and they were wrong in an instructive way** — see
+  [The bias tile](#the-bias-tile-and-why-the-first-read-of-this-profile-was-wrong). The
+  claims themselves hold up: the transposed read really does coalesce into
+  `ld.global.v4.b32`, and keeping the tile bf16 *into the FMA* really does cost registers.
+  What was wrong was concluding there was nothing there. Both entries measured the load
+  and the FMA and never looked at the `extf` between them, which was 18.4 % of the
+  kernel's stall samples.
 
 ---
 
@@ -331,10 +542,12 @@ Everything is held in `[k, j]` orientation so that dV and dK need no accumulator
 them matmuls — the ones carrying an `M/N/K` annotation:
 
 ```
-      loaded:  k_blk[64,32]  v_blk[64,32]  q[64,32]  do[64,32]  bT[64,64]  mx,dn,delta[64]
+      loaded:  k_blk[64,32]  v_blk[64,32]  q[64,32]  do[64,32]  b2t[64,64] fp32
+               mx,dn,delta[64]
 
   (1) sT[64,64]  = k_blk @ trans(q)         M=BK  N=BJ  K=DIM     recompute the scores
-      sT         = (sT * sm_scale + bT) * inv_ln2, then the mask selects
+      sT         = sT * s2 + b2t, then the mask selects            one FFMA; s2 and b2t
+                                                                  both carry inv_ln2
   (2) pT[64,64]  = exp2(sT - mx) / dn                             rebuild p, no online softmax
   (3) dpT[64,64] = v_blk @ trans(do)        M=BK  N=BJ  K=DIM     independent of (1)
       dsT[64,64] = pT * (dpT - delta)                             softmax jacobian
@@ -367,11 +580,12 @@ And `m_blk` is indexed `[i, k]`, which makes it **loop-invariant** for a CTA tha
 k-tile — one `[k]` load per CTA instead of one per iteration, which is why the forward's
 32x mask-load amplification never appears here.
 
-## The two helper passes
+## The three helper passes
 
 | kernel | grid | what each program does | bound by |
 | --- | --- | --- | --- |
 | `_bwd_preprocess` | `(cdiv(N,64), N, bh)` = 131,072 | `delta[i,j] = Σ_d o·do` for a `[64, DIM]` tile | bandwidth: 1.11 GB at 4.19 TB/s, 0.26 ms |
+| `_bwd_bias_prep` | `(cdiv(N,32), cdiv(N,32), bh)` = 8,192 | `b2t[k,j] = b[j,k] * inv_ln2`, fp32, a `[32,32]` tiled transpose | bandwidth: 16 MB read + 33 MB written, 0.02 ms |
 | `_bwd_scale_cast` | flat, `cdiv(268M, 4096)` = 65,536 | `dq = (dq_f32 * sm_scale)` cast to bf16 | bandwidth: 1.6 GB, 0.46 ms with the db transpose |
 
 `delta` is a batched inner product, not a GEMM — 0.48 FLOP/byte against this card's ~35
