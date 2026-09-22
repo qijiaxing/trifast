@@ -8,7 +8,14 @@ import torch
 import triton
 import triton.language as tl
 
-from trifast._fused_backward import _prepare_do, _preprocess
+from trifast._fused_backward import (
+    _BUCKET_CONFIGS,
+    _jblock,
+    _prepare_do,
+    _preprocess,
+    _prune_bucket_stages,
+)
+from trifast.autotune import autotune
 
 
 @triton.jit(do_not_specialize=["N", "I_START", "CHUNK_I"])
@@ -33,6 +40,7 @@ def _chunk_bwd_k_owned_body(
     D: tl.constexpr,
     BJ: tl.constexpr,
     BK: tl.constexpr,
+    CLOSEST_N: tl.constexpr,
     I_START: tl.int64,
     CHUNK_I: tl.int64,
     CENTERED: tl.constexpr = False,
@@ -53,62 +61,82 @@ def _chunk_bwd_k_owned_body(
     singleton_diff = tl.load(DIFF + (bh * N + i) * D + d, owns_singleton, 0)
     dk = tl.zeros((BK, D), tl.float32)
     dv = tl.zeros((BK, D), tl.float32)
-    dtype: tl.constexpr = Q.dtype.element_ty
     scale: tl.constexpr = D**-0.5
-    invln2: tl.constexpr = 1.4426950408889634
-    for start_j in range(0, N, BJ):
-        j = start_j + tl.arange(0, BJ)
-        j_valid = tl.full((BJ,), True, tl.int1) if ALIGNED else j < N
-        valid = (j_valid[:, None]) & (k_valid[None, :])
-        qoff = ((bh * N + i) * N + j[:, None]) * D + d[None, :]
-        boff = bh * N * N + j[:, None].to(tl.int64) * N + k[None, :]
-        bias = tl.load(B + boff, valid, 0).to(tl.float32)
-        if CENTERED:
-            shift = tl.load(B + bh * N * N + j.to(tl.int64) * N, j_valid, 0).to(
-                tl.float32
-            )
-        else:
-            shift = tl.full((BJ,), 0.0, tl.float32)
-        sentinel2 = (-1.0e4 - shift) * invln2
-        q = tl.load(Q + qoff, j_valid[:, None], 0)
-        doff = qoff
-        do = tl.load(DO + doff, j_valid[:, None], 0)
-        delta = tl.load(DELTA + (bh * N + i) * N + j, j_valid, 0)
-        mx = tl.load(MX + (bh * N + i) * N + j, j_valid, 0)
-        dn = tl.load(DN + (bh * N + i) * N + j, j_valid, 1)
-        s = (
-            tl.dot(q, tl.trans(kk), input_precision="ieee") * scale
-            + (bias - shift[:, None])
-        ) * invln2
-        s = tl.where(masked[None, :] | ~valid, sentinel2[:, None], s)
-        p = tl.exp2(s - mx[:, None]) / dn[:, None]
-        p = tl.where(valid, p, 0.0)
-        dp = tl.dot(do, tl.trans(v), input_precision="ieee")
-        ds = tl.where(valid & ~masked[None, :], p * (dp - delta[:, None]), 0.0)
-        if singleton:
-            if N == 1:
-                ds = tl.full((BJ, BK), 0.0, tl.float32)
-            else:
-                sentinel_p = tl.exp2(sentinel2 - mx) / dn
-                stable_dp = tl.sum(do.to(tl.float32) * singleton_diff[None, :], 1)
-                ds = tl.where(
-                    valid & ~masked[None, :], p * (sentinel_p * stable_dp)[:, None], 0.0
-                )
-        ds_low = ds.to(dtype)
-        dq = tl.dot(ds_low, kk, input_precision="ieee") * scale
-        dk += tl.dot(tl.trans(ds_low), q, input_precision="ieee")
-        dv += tl.dot(tl.trans(p).to(dtype), do, input_precision="ieee")
-        tl.atomic_add(
-            DQ + ((bh * CHUNK_I + local_i) * N + j[:, None]) * D + d[None, :],
-            dq,
-            j_valid[:, None],
-            sem="relaxed",
+    dq_row = DQ + (bh * CHUNK_I + local_i) * N * D
+    full_j = (N // BJ) * BJ
+    for start_j in range(0, full_j, BJ):
+        dk, dv = _jblock(
+            Q,
+            B,
+            DELTA,
+            DO,
+            MX,
+            DN,
+            dq_row,
+            DB,
+            kk,
+            v,
+            k,
+            k_valid,
+            masked,
+            singleton,
+            singleton_diff,
+            dk,
+            dv,
+            start_j,
+            i,
+            bh,
+            N,
+            D,
+            BJ,
+            BK,
+            CLOSEST_N,
+            CENTERED,
+            J_MASKED=False,
         )
-        tl.atomic_add(DB + boff, ds, valid, sem="relaxed")
+    if full_j < N:
+        start_j = full_j
+        dk, dv = _jblock(
+            Q,
+            B,
+            DELTA,
+            DO,
+            MX,
+            DN,
+            dq_row,
+            DB,
+            kk,
+            v,
+            k,
+            k_valid,
+            masked,
+            singleton,
+            singleton_diff,
+            dk,
+            dv,
+            start_j,
+            i,
+            bh,
+            N,
+            D,
+            BJ,
+            BK,
+            CLOSEST_N,
+            CENTERED,
+            J_MASKED=True,
+        )
     tl.store(DK + koff, dk * scale, k_valid[:, None])
     tl.store(DV + koff, dv, k_valid[:, None])
 
 
+@autotune(
+    configs=_BUCKET_CONFIGS,
+    key=["H", "D", "BJ", "BK", "CENTERED", "CLOSEST_N"],
+    reset_to_zero=["DQ"],
+    restore_value=["DB"],
+    prune_configs_by={"early_config_prune": _prune_bucket_stages},
+    cache_name="chunk_bwd_k_owned_padded_bucket_peel_v1",
+)
 @triton.jit(do_not_specialize=["N", "I_START", "CHUNK_I"])
 def _chunk_bwd_k_owned(
     Q,
@@ -133,10 +161,11 @@ def _chunk_bwd_k_owned(
     BK: tl.constexpr,
     I_START: tl.int64,
     CHUNK_I: tl.int64,
+    CLOSEST_N: tl.constexpr,
     CENTERED: tl.constexpr = False,
 ):
-    ALIGNMENT: tl.constexpr = max(BJ, BK)
-    if N % ALIGNMENT == 0:
+    # ALIGNED describes this key tile only; query tails are peeled separately.
+    if (tl.program_id(0) + 1) * BK <= N:
         _chunk_bwd_k_owned_body(
             Q,
             K,
@@ -153,11 +182,12 @@ def _chunk_bwd_k_owned(
             DK,
             DV,
             DB,
-            tl.multiple_of(N, ALIGNMENT),
+            N,
             H,
             D,
             BJ,
             BK,
+            CLOSEST_N,
             I_START,
             CHUNK_I,
             CENTERED,
@@ -185,6 +215,7 @@ def _chunk_bwd_k_owned(
             D,
             BJ,
             BK,
+            CLOSEST_N,
             I_START,
             CHUNK_I,
             CENTERED,
@@ -212,6 +243,7 @@ def _chunk_bwd_k_owned(
             D,
             BJ,
             BK,
+            CLOSEST_N,
             I_START,
             CHUNK_I,
             CENTERED,
@@ -256,6 +288,9 @@ def fused_backward(
     centered_stats=False,
     chunk_i=128,
 ):
+    if warps != 4 or stages not in (1, 2, 3):
+        raise ValueError("bucket tuning requires warps=4 and stages in {1,2,3}")
+    # stages is retained for compatibility; the bucket tuner chooses 1/2/3.
     bs, h, n, _, d = q.shape
     if chunk_i < 1:
         raise ValueError("chunk_i must be positive")
@@ -265,6 +300,9 @@ def fused_backward(
     q, k, v, b, o, mx, dn, mask = [
         x.contiguous() for x in (q, k, v, b, o, mx, dn, mask)
     ]
+    bucket = 1 << (n - 1).bit_length()
+    if bucket != n:
+        b = torch.nn.functional.pad(b, (0, bucket - n))
     do = _prepare_do(do, bs, h, n, d)
     delta = torch.empty((bs * h, n, n), device=q.device, dtype=torch.float32)
     count = torch.empty((bs * h, n), device=q.device, dtype=torch.int32)
@@ -316,11 +354,10 @@ def fused_backward(
             bk,
             start,
             c,
+            CLOSEST_N=bucket,
             CENTERED=centered_stats,
-            num_warps=warps,
-            num_stages=stages,
         )
         _flush_dq[(triton.cdiv(length * n * d, 1024), bs * h)](
             scratch, dq, n, d, c, start, length, 1024, num_warps=4
         )
-    return dq, dk, dv, db.to(b.dtype)
+    return dq, dk, dv, db[..., :n].to(b.dtype).contiguous()

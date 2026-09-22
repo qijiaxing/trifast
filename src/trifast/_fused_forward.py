@@ -1,7 +1,7 @@
-"""Online-softmax forward with runtime N/strides and fully written outputs.
+"""Experimental bias-only power-of-two physical padding; runtime logical N.
 
-The tile depends only on dtype, and D remains a compilation parameter.
-Changing N does not request a new Triton specialization or autotune search.
+N stays runtime; each bucket/dtype/D/H configuration tunes a small tile set.
+The persistent cache namespace is separate from shape-specialized forward.
 """
 
 import torch
@@ -10,6 +10,7 @@ import triton.language as tl
 from einops import rearrange
 from torch.library import triton_op, wrap_triton
 
+from trifast.autotune import autotune
 from trifast.torch import MASK_FILL
 
 
@@ -71,11 +72,35 @@ def _fwd_kv_block(q_block, kt_ptrs, b_ptrs, mask_ptrs, v_ptrs,
     return scores_max, sm_denom, acc
 
 
+_bucket_forward_configs = [
+    triton.Config({"BLOCK_J": bj, "BLOCK_K": bk}, num_warps=4, num_stages=stages)
+    for bj, bk in ((32, 32), (64, 32), (64, 64))
+    for stages in (1, 3)
+]
+
+
+def _prune_bucket_forward(configs, named_args, **kwargs):
+    args = {**named_args, **kwargs}
+    # IEEE FP32 lowering at wide D has much higher staging requirements.
+    # Dtype is explicit in the key, independent of tensor/fake-tensor handling.
+    if args["DTYPE_ID"] == 2 and args["DIM"] >= 64:
+        return [c for c in configs if c.kwargs["BLOCK_J"] == 32
+                and c.kwargs["BLOCK_K"] == 32 and c.num_stages == 1]
+    return configs
+
+
+@autotune(
+    configs=_bucket_forward_configs,
+    key=["H", "DIM", "CLOSEST_N", "DTYPE_ID"],
+    prune_configs_by={"early_config_prune": _prune_bucket_forward},
+    cache_name="padded_bucket_v1",
+)
 @triton.jit(do_not_specialize=["N"])
 def _fwd_fused_optimized(
     o_ptr, lse_ptr, mx_ptr, dn_ptr, q_ptr, k_ptr, v_ptr, b_ptr, mask_ptr,
     sm_scale: tl.constexpr, neg_inf: tl.constexpr,
     N: tl.int64, H: tl.constexpr, DIM: tl.constexpr,
+    CLOSEST_N: tl.constexpr, DTYPE_ID: tl.constexpr,
     BLOCK_J: tl.constexpr, BLOCK_K: tl.constexpr,
     CENTERED: tl.constexpr = False,
 ):
@@ -97,7 +122,8 @@ def _fwd_fused_optimized(
     stride_od: tl.constexpr = 1
     stride_lh, stride_lm = N.to(tl.int64) * N, N.to(tl.int64)
     stride_ln: tl.constexpr = 1
-    stride_bh, stride_bm = N.to(tl.int64) * N, N.to(tl.int64)
+    stride_bh = N.to(tl.int64) * CLOSEST_N
+    stride_bm: tl.constexpr = CLOSEST_N
     stride_bn: tl.constexpr = 1
     stride_maskh, stride_maskm = N.to(tl.int64) * N, N.to(tl.int64)
     stride_maskn: tl.constexpr = 1
@@ -222,7 +248,7 @@ def _fwd_fused_optimized(
 # fmt: on
 
 
-@triton_op("trifast::fused_attention_forward_optimized", mutates_args={})
+@triton_op("trifast::fused_attention_forward_padded_bucket", mutates_args={})
 def fused_forward_optimized(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -263,16 +289,19 @@ def fused_forward_optimized(
     lse = torch.empty((bh, n, n), device=q.device, dtype=torch.float32)
     mx, dn = torch.empty_like(lse), torch.empty_like(lse)
 
-    # Fixed per-dtype tile, independent of N. IEEE FP32 uses smaller tiles
-    # and one pipeline stage to bound shared-memory use at D=128.
-    block_j, block_k, stages = (32, 32, 1) if q.dtype == torch.float32 else (64, 32, 3)
+    closest_n = 1 << (n - 1).bit_length()
+    # Only bias receives a bucket-wide physical pitch. Q/K/V and output stay
+    # at logical N. Padding allocation/copy are part of each wrapper call.
+    if closest_n != n:
+        b = torch.nn.functional.pad(b, (0, closest_n - n))
+    dtype_id = {torch.float16: 0, torch.bfloat16: 1, torch.float32: 2}[q.dtype]
 
     # fmt: off
     wrap_triton(_fwd_fused_optimized)[grid](
         o, lse, mx, dn, q, k, v, b, mask,
         neg_inf=MASK_FILL,
         sm_scale=sm_scale, N=n, H=h, DIM=dim,
-        BLOCK_J=block_j, BLOCK_K=block_k, num_warps=4, num_stages=stages,
+        CLOSEST_N=closest_n, DTYPE_ID=dtype_id,
         CENTERED=(q.dtype == torch.float32),
     )
 
