@@ -16,25 +16,30 @@ import triton
 import triton.testing
 from triton.tools.tensor_descriptor import TensorDescriptor
 
+import trifast.torch as trifast_torch
 from trifast.autotune_helpers import device_name
 from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS, USE_TMA_MASK
+from trifast.torch import _triangle_attention, triangle_attention_bwd
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
-from trifast.utils import gen_tensors
+from trifast.triton_bwd import _bwd_fused_tuned, _bwd_preprocess
+from trifast.utils import confirm_gpu_stayed_idle, gen_tensors, require_idle_gpu
 
 N_VALUES = [512, 640, 768, 800, 1024]
 DTYPES = [torch.bfloat16]
-KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b")
+KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b", "bwd_fused")
 KERNEL_NAMES = {
     "fwd": "Forward",
     "bwd_q": "Backward Q",
     "bwd_kv": "Backward K/V",
     "bwd_b": "Backward Bias",
+    "bwd_fused": "Backward Fused",
 }
 KERNEL_STYLES = {
     "fwd": ("blue", "-"),
     "bwd_q": ("green", "-"),
     "bwd_kv": ("orange", "-"),
     "bwd_b": ("red", "-"),
+    "bwd_fused": ("purple", "-"),
 }
 
 # Number of matrix multiplications performed by each kernel.  One matrix
@@ -45,6 +50,11 @@ MATMULS_PER_KERNEL = {
     "bwd_q": 3,  # QK^T recomputation, dO V^T, and dS K
     "bwd_kv": 4,  # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
     "bwd_b": 2,  # QK^T recomputation and dO V^T
+    # The point of the fused kernel: one QK^T and one dO V^T serve all four gradients,
+    # so five replaces the 3 + 4 + 2 = 9 the three kernels above perform between them.
+    # TFLOP/s is therefore *not* comparable across these columns -- see the wall-clock
+    # table that main() prints underneath.
+    "bwd_fused": 5,  # QK^T, P^T dO, dO V^T, dS^T Q and dS K
 }
 
 
@@ -162,6 +172,9 @@ def _make_launchers(
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)
 
     def bwd_kv_grid(meta):
+        return (triton.cdiv(n, meta["BLOCK_K"]), n, bh)
+
+    def bwd_fused_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_K"]), n, bh)
 
     def bwd_b_grid(meta):
@@ -391,11 +404,44 @@ def _make_launchers(
             CLOSEST_N=closest_n,
         )
 
+    dbt = torch.zeros((bh, n, n), device=q.device, dtype=torch.float32)
+    dq_acc = torch.zeros((bh, n, n, d), device=q.device, dtype=torch.float32)
+
+    def run_bwd_fused() -> None:
+        # Keep this argument list in sync with trifast.torch.triangle_attention_bwd.
+        _bwd_fused_tuned[bwd_fused_grid](
+            delta, delta.stride(0), delta.stride(1), delta.stride(2),
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            bias, bias.stride(0), bias.stride(1), bias.stride(2),
+            mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
+            mask, mask.stride(0), mask.stride(1), mask.stride(2),
+            do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
+            dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+            dbt, dbt.stride(0), dbt.stride(1), dbt.stride(2),
+            dq_acc, dq_acc.stride(0), dq_acc.stride(1), dq_acc.stride(2), dq_acc.stride(3),
+            sm_scale=sm_scale, neg_inf=MASK_FILL,
+            N=n, H=h, DIM=d, CLOSEST_N=closest_n,
+            NEED_DB=True, NEED_DQ=True,
+        )
+
+    def run_bwd_pre() -> None:
+        _bwd_preprocess[(triton.cdiv(n, 64), n, bh)](
+            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            delta, delta.stride(0), delta.stride(1), delta.stride(2),
+            n, DIM=d, BLOCK_J=64, num_warps=4,
+        )
+
     return {
         "fwd": run_fwd,
         "bwd_q": run_bwd_q,
         "bwd_kv": run_bwd_kv,
         "bwd_b": run_bwd_b,
+        "bwd_fused": run_bwd_fused,
+        "bwd_pre": run_bwd_pre,
     }
 
 
@@ -413,7 +459,10 @@ def benchmark(n, dtype, kernel):
 
         # Populate o/mx/dn.  All backward kernels consume these values.
         launchers["fwd"]()
-        if kernel != "fwd":
+        if kernel == "bwd_fused":
+            # Populate delta.  The fused kernel reads it but no longer produces it.
+            launchers["bwd_pre"]()
+        elif kernel != "fwd":
             # Populate delta.  This also compiles/tunes bwd_q before bwd_q itself
             # is timed and supplies the input needed by bwd_kv and bwd_b.
             launchers["bwd_q"]()
@@ -494,6 +543,72 @@ def _print_perf_tables(result_dfs, kernels: tuple[str, ...]) -> None:
         )
 
 
+def _backward_totals(dtype: torch.dtype, h: int = 8, d: int = 32) -> None:
+    """Measure the whole backward both ways, allocations and helper passes included.
+
+    The per-kernel table above cannot answer "is the fused backward faster?", because its
+    columns count different numbers of matmuls (5 against 3 + 4 + 2). This can: it times
+    `triangle_attention_bwd` end to end with `USE_FUSED_BWD` flipped -- so the fused column
+    pays for its delta pass, its dq cast, its db transpose and its two zeroed accumulators
+    -- and then reports both columns against one fixed FLOP count, so they are directly
+    comparable to each other and to the Forward column.
+    """
+    def time_both(n: int) -> dict[bool, float]:
+        """Inputs stay local so they are freed before the next n is allocated."""
+        with torch.no_grad():
+            q, k, v, bias, mask = gen_tensors(
+                n=n, d=d, h=h, use_mask=True,
+                device=torch.device("cuda"), dtype=dtype,
+            )
+            o, _lse, mx, dn = _triangle_attention(q, k, v, bias, mask)
+            do = torch.randn_like(o)
+
+            def run() -> None:
+                triangle_attention_bwd(do, q, k, v, bias, o, mx, dn, mask)
+
+            times = {}
+            for fused in (False, True):
+                trifast_torch.USE_FUSED_BWD = fused
+                run()  # compile and tune outside the timed region
+                torch.cuda.synchronize()
+                times[fused] = triton.testing.do_bench(
+                    run, warmup=50, rep=250, quantiles=[0.5]
+                )
+        return times
+
+    rows = []
+    for n in N_VALUES:
+        try:
+            times = time_both(n)
+            # Both columns are counted against the same five matmuls -- the work a
+            # backward *has* to do, and the 2.5x-of-forward convention the attention
+            # benchmarks use. The three-kernel path actually performs nine, so its number
+            # understates its raw matmul rate on purpose: what this table compares is how
+            # fast each path delivers the same gradients.
+            rows.append((
+                str(n),
+                f"{_kernel_tflops(n, h, d, 'bwd_fused', times[False]):.2f}",
+                f"{_kernel_tflops(n, h, d, 'bwd_fused', times[True]):.2f}",
+                f"{times[False] / times[True]:.2f}x",
+            ))
+        except torch.cuda.OutOfMemoryError:
+            rows.append((str(n), "OOM", "OOM", "-"))
+        finally:
+            trifast_torch.USE_FUSED_BWD = True
+            torch.cuda.empty_cache()
+
+    dtype_name = {
+        torch.bfloat16: "BF16",
+        torch.float16: "FP16",
+        torch.float32: "FP32",
+    }.get(dtype, str(dtype).removeprefix("torch.").upper())
+    _print_table(
+        f"TriFast backward algorithmic throughput — {dtype_name} (TFLOP/s)",
+        ("N", "Three kernels", "Fused", "Speedup"),
+        rows,
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark individual TriFast Triton kernels.",
@@ -504,13 +619,25 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         choices=KERNELS,
         default=list(KERNELS),
-        help="kernels to benchmark (default: all four)",
+        help="kernels to benchmark (default: all of them)",
+    )
+    parser.add_argument(
+        "--skip-totals",
+        action="store_true",
+        help="skip the end-to-end backward wall-clock table",
+    )
+    parser.add_argument(
+        "--allow-busy-gpu",
+        action="store_true",
+        help="measure even if another job is using the GPU (do not trust the numbers)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    # This GPU is shared. Refuse to produce numbers next to somebody else's job.
+    require_idle_gpu(exit_on_busy=not args.allow_busy_gpu)
     # Preserve the requested order while avoiding duplicate benchmark runs.
     kernels = tuple(dict.fromkeys(args.kernels))
     configs = [_report(dtype, kernels) for dtype in DTYPES]
@@ -527,6 +654,10 @@ def main() -> None:
         return_df=True,
     )
     _print_perf_tables(result_dfs, kernels)
+    if not args.skip_totals:
+        for dtype in DTYPES:
+            _backward_totals(dtype)
+    confirm_gpu_stayed_idle("bench_kernels")
 
 
 if __name__ == "__main__":

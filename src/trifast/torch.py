@@ -14,6 +14,18 @@ from trifast.triton import (
     _bwd_q,
     _bwd_b,
 )
+from trifast.autotune_bwd import pinned_bwd_fused_config
+from trifast.triton_bwd import (
+    _bwd_fused,
+    _bwd_fused_tuned,
+    _bwd_preprocess,
+    _bwd_scale_cast,
+)
+
+# Traced/fake tensor execution (torch.compile, opcheck) differs from eager in two ways
+# that matter to the kernels: it cannot build tensormaps, and it cannot be trusted to run
+# an autotuner's reset_to_zero hook. Both paths branch on this.
+_is_fake = lambda t: type(t).__name__ in {"FakeTensor", "FunctionalTensor"}
 
 # Value the kernels substitute for a masked score. NOT torch.finfo(q.dtype).min, which
 # is what the reference's masked_fill_ uses and what this file used to pass: the kernels
@@ -32,6 +44,12 @@ USE_TMA_BIAS = True
 # Route the bool mask through TMA as a bf16 copy instead of a per-iteration pointer
 # load. Worth ~+2% on the forward; flip to False to fall back to the pointer load.
 USE_TMA_MASK = True
+# Run the backward as one fused kernel (plus two memory-bound passes) instead of the
+# three kernels in triton.py, which each recompute the score tile. Flip to False to fall
+# back to them; both paths are exercised by scripts/bench_kernels.py. The fused path
+# accumulates db and dq with atomics, so those two gradients are no longer bitwise
+# reproducible run to run -- the spread is ~1e-7 relative, far below one bf16 ulp.
+USE_FUSED_BWD = True
 
 
 @triton_op("trifast::triangle_attention", mutates_args={})
@@ -104,7 +122,6 @@ def _triangle_attention(
     # real data pointer, and the descriptor construction below runs during fake
     # tracing. Since `_fwd_pointer` is `autotune(...)(_fwd.fn)` -- the same kernel
     # body -- the branches have to live here rather than in a separate kernel.
-    _is_fake = lambda t: type(t).__name__ in {"FakeTensor", "FunctionalTensor"}
     # TMA needs 16-byte-aligned global strides; a contiguous [*, dim] inner
     # layout gives dim * element_size bytes per row.
     can_use_tma = (
@@ -265,6 +282,97 @@ def triangle_attention_bwd(
     sm_scale = dim**-0.5
 
     CLOSEST_N = 2 ** int(math.ceil(math.log2(n)))
+
+    if USE_FUSED_BWD:
+        # One kernel for all four gradients instead of three that each recompute the
+        # score tile: 41.3 ms against 62.4 at n=1024, h=8, d=32, bf16. See
+        # trifast/triton_bwd.py for why every tile is transposed to [k, j] and why db
+        # and dq have to be atomic.
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        dq = torch.empty_like(q)
+        dmask = torch.zeros_like(mask)
+
+        # delta stays fp32.
+        d = torch.empty((bh, n, n), dtype=torch.float32, device=q.device)
+
+        # The two atomic accumulators, and the one place `torch.empty_like` would be
+        # wrong: no store covers every element, the kernel only adds. The autotuner's
+        # `reset_to_zero` does not help -- it fires during tuning, not on a
+        # cached-config launch.
+        #
+        # db accumulates *transposed*, [bh, k, j], because ds is produced as [k, j] and
+        # db's own layout is [bh, j, k]; a transposed atomic would scatter four bytes per
+        # lane. dq accumulates in fp32 because a bf16 atomic would round once per k
+        # block instead of once in total, and db was already the most
+        # precision-sensitive of the five gradients.
+        dbt = torch.zeros((bh, n, n), dtype=torch.float32, device=q.device)
+        dq_acc = torch.zeros((bh, n, n, dim), dtype=torch.float32, device=q.device)
+
+        # delta = rowsum(o * do).
+        # fmt: off
+        wrap_triton(_bwd_preprocess)[(triton.cdiv(n, 64), n, bh)](
+            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            d, d.stride(0), d.stride(1), d.stride(2),
+            n, DIM=dim, BLOCK_J=64, num_warps=4,
+        )
+        # fmt: on
+
+        def fused_grid(x):
+            return (triton.cdiv(n, x["BLOCK_K"]), n, bh)
+
+        # Under tracing, take the kernel with a pinned config rather than the autotuner.
+        # `_fwd_pointer` exists for the analogous reason (torch.compile rejects
+        # autotuners carrying config hooks); here it is a correctness requirement, not a
+        # compatibility one. See pinned_bwd_fused_config: a cold autotune cache inside a
+        # compiled region leaves the db and dq accumulators ~400x too large, because the
+        # benchmarking trials add into them and nothing zeroes them afterwards.
+        if _is_fake(q):
+            fused_kernel = _bwd_fused
+            fused_cfg = pinned_bwd_fused_config(dim, q.dtype)
+        else:
+            fused_kernel = _bwd_fused_tuned
+            fused_cfg = {}
+
+        # fmt: off
+        wrap_triton(fused_kernel)[fused_grid](
+            d, d.stride(0), d.stride(1), d.stride(2),
+            q, q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k, k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v, v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            b, b.stride(0), b.stride(1), b.stride(2),
+            mx, dn, mx.stride(0), mx.stride(1), mx.stride(2),
+            mask, mask.stride(0), mask.stride(1), mask.stride(2),
+            do, do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            dk, dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
+            dv, dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+            dbt, dbt.stride(0), dbt.stride(1), dbt.stride(2),
+            dq_acc, dq_acc.stride(0), dq_acc.stride(1), dq_acc.stride(2), dq_acc.stride(3),
+            sm_scale=sm_scale,
+            neg_inf=MASK_FILL,
+            N=n, H=h, DIM=dim,
+            CLOSEST_N=CLOSEST_N,
+            NEED_DB=True, NEED_DQ=True,
+            **fused_cfg,
+        )
+        # fmt: on
+
+        # dq = (dq_acc * sm_scale) in the input dtype. sm_scale is folded in here rather
+        # than per tile in the kernel: 268 M multiplies instead of bh*n^3*DIM/BLOCK_K.
+        numel = dq_acc.numel()
+        wrap_triton(_bwd_scale_cast)[(triton.cdiv(numel, 4096),)](
+            dq_acc, dq, sm_scale, numel, BLOCK=4096, num_warps=4
+        )
+        db = dbt.transpose(1, 2).contiguous().to(b.dtype)
+
+        dq = rearrange(dq, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+        dk = rearrange(dk, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+        dv = rearrange(dv, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+        db = rearrange(db, "(b h) ... -> b h ...", h=h, b=bs).contiguous()
+        return dq, dk, dv, db, dmask
+
+    # --- The original three-kernel path, kept reachable via USE_FUSED_BWD for A/B. ---
 
     # Every valid element of these outputs is overwritten by a non-atomic store.
     dq = torch.empty_like(q)
