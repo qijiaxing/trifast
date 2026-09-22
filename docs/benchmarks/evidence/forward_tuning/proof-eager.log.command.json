@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python",
+    "scripts/check_bucketed_n.py"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:57:56.738369+00:00",
+  "state": "finished",
+  "timeout_seconds": 900,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:59:23.419787+00:00",
+  "wall_seconds": 86.68142528086901
+}

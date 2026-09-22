@@ -1,0 +1,8 @@
+{
+  "base_commit": "4b832de",
+  "base_sha256": "efc15ab503ed6045f89ad47b4cf245523a039e52811fc76e81cb9dd902768053",
+  "candidate_sha256": "5de3bdae0e96bcd1bee01f59bd3741e1732ed18336f50fedb7da66d4b88ee415",
+  "file": "candidate_noop_pad.py",
+  "kernel": "_fused_tma_noop_pad",
+  "custom_op": "trifast_experiment::fused_forward_tma_noop_pad"
+}

@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python",
+    "/workspace/experiments/forward-tuning-20260922/validate_forced_config.py"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T10:04:08.172463+00:00",
+  "state": "finished",
+  "timeout_seconds": 900,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T10:04:19.384142+00:00",
+  "wall_seconds": 11.211686290800571
+}

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "compute-sanitizer",
+    "--tool",
+    "initcheck",
+    "--error-exitcode",
+    "99",
+    "python",
+    "/workspace/experiments/forward-tuning-20260922/validate_forced_config.py",
+    "--sanitizer"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T10:02:37.766023+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T10:03:10.768582+00:00",
+  "wall_seconds": 33.00256531313062
+}

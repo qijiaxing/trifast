@@ -1,0 +1,18 @@
+{
+  "base_commit": "4b832de",
+  "base_sha256": "efc15ab503ed6045f89ad47b4cf245523a039e52811fc76e81cb9dd902768053",
+  "candidates": {
+    "unified": {
+      "file": "candidate_unified.py",
+      "sha256": "165e2030f73b68f870b5a6b8fffe1b2a536e0143122028c859aefc4c6163f609",
+      "kernel": "_fused_tma_unified",
+      "custom_op": "trifast_experiment::fused_forward_tma_unified"
+    },
+    "tail_first": {
+      "file": "candidate_tail_first.py",
+      "sha256": "8923d796e817e1dc7133fa99a31738c8511fc5d945efb668e48549f441ac7c75",
+      "kernel": "_fused_tma_tail_first",
+      "custom_op": "trifast_experiment::fused_forward_tma_tail_first"
+    }
+  }
+}

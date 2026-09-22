@@ -1,5 +1,7 @@
 # Forward regression investigation and optimized results
 
+Subsequent tuning is documented in [the current report](forward_tuning.md). This report retains the historical `4b832de` source and measurements.
+
 Frozen pointer candidate `64148ed` has slower forward execution than upstream, despite its fused backward improving combined latency. The [baseline report](bucketed_n.md) records its performance and validation. This report records corrected frozen implementation `4b832de`, its complete validation, and final performance.
 
 ## Measured contributors

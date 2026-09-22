@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "/workspace/experiments/forward-tuning-20260922/sweep_configs.py",
+    "--shapes",
+    "512,800,1024",
+    "--configs-json",
+    "/workspace/experiments/forward-tuning-20260922/register_configs.json"
+  ],
+  "cwd": "/workspace/trifast-pr",
+  "start_utc": "2026-09-22T09:42:54.346017+00:00",
+  "state": "finished",
+  "timeout_seconds": 600,
+  "scope": "command wall time including compilation and host work; not GPU busy time",
+  "returncode": 0,
+  "end_utc": "2026-09-22T09:43:29.722818+00:00",
+  "wall_seconds": 35.376806784421206
+}

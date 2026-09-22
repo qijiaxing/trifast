@@ -1,6 +1,6 @@
 # TriFast
 
-> **Bucketed runtime-N fused attention.** The opt-in fused API uses the same power-of-two length buckets as upstream, with real N kept at runtime. The BF16/FP16 Hopper path retains upstream TMA forward transfers and uses fused backward. See [current implementation and measurements](docs/forward_recovery.md) / [中文报告](docs/forward_recovery_zh.md). Historical fused benchmarks describe `249f3e2`; the strict single-binary experiment describes `db7285d`. Neither is a measurement of this branch. The original `triangle_attention` is unchanged.
+> **Bucketed runtime-N fused attention.** The opt-in fused API uses the same power-of-two length buckets as upstream, with real N kept at runtime. The BF16/FP16 Hopper path retains upstream TMA forward transfers and uses fused backward. See [current implementation and measurements](docs/forward_tuning.md) / [中文报告](docs/forward_tuning_zh.md). Historical fused benchmarks describe `249f3e2`; the strict single-binary experiment describes `db7285d`. Neither is a measurement of this branch. The original `triangle_attention` is unchanged.
 
 This is TriFast fork, which is optimized for Hopper GPU.
 
@@ -60,5 +60,5 @@ out = triangle_attention_fused(q, k, v, bias, mask)  # low-memory, chunk_i=128
 The explicit `triangle_attention_fused_low_memory` helper remains available
 for compatibility; it requires a positive integer chunk size and rejects `None`.
 
-See [current implementation, validation and measurements](docs/forward_recovery.md) /
-[中文说明](docs/forward_recovery_zh.md). The [pointer-forward bucketed baseline](docs/bucketed_n.md) records the preceding candidate. The [original shape-specialized measurements](docs/benchmarks/h20_fused.md) are retained as historical evidence.
+See [current implementation, validation and measurements](docs/forward_tuning.md) /
+[中文说明](docs/forward_tuning_zh.md). The [pointer-forward bucketed baseline](docs/bucketed_n.md) records the preceding candidate. The [original shape-specialized measurements](docs/benchmarks/h20_fused.md) are retained as historical evidence.
