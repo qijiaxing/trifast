@@ -4,6 +4,10 @@ The forward kernel produces the softmax statistics consumed by the backward
 kernels.  The backward-q kernel additionally produces ``delta``, which is an
 input to the backward-kv and backward-bias kernels.  Those prerequisite
 launches happen before timing starts.
+
+``cuda_b`` is the sm_90a CUDA forward kernel from uplifting-biomolecular-modeling
+(trifast.bio), timed on the same inputs for comparison with ``fwd``.  Its whole
+call is timed, including its per-call bias/mask staging.
 """
 
 import argparse
@@ -17,24 +21,27 @@ import triton.testing
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 from trifast.autotune_helpers import device_name
+from trifast.bio import cuda_b
 from trifast.torch import MASK_FILL, USE_TMA, USE_TMA_BIAS, USE_TMA_MASK
 from trifast.triton import _bwd_b, _bwd_kv, _bwd_q, _fwd
 from trifast.utils import gen_tensors
 
-N_VALUES = [512, 640, 768, 800, 1024]
+N_VALUES = [256, 300, 351, 410, 490, 512, 640, 768, 800, 1024]
 DTYPES = [torch.bfloat16]
-KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b")
+KERNELS = ("fwd", "bwd_q", "bwd_kv", "bwd_b", "cuda_b")
 KERNEL_NAMES = {
     "fwd": "Forward",
     "bwd_q": "Backward Q",
     "bwd_kv": "Backward K/V",
     "bwd_b": "Backward Bias",
+    "cuda_b": "Bio cuda_b",
 }
 KERNEL_STYLES = {
     "fwd": ("blue", "-"),
     "bwd_q": ("green", "-"),
     "bwd_kv": ("orange", "-"),
     "bwd_b": ("red", "-"),
+    "cuda_b": ("brown", "--"),
 }
 
 # Number of matrix multiplications performed by each kernel.  One matrix
@@ -45,6 +52,7 @@ MATMULS_PER_KERNEL = {
     "bwd_q": 3,  # QK^T recomputation, dO V^T, and dS K
     "bwd_kv": 4,  # QK^T recomputation, P^T dO, dO V^T, and dS^T Q
     "bwd_b": 2,  # QK^T recomputation and dO V^T
+    "cuda_b": 2,  # QK^T and PV
 }
 
 
@@ -155,6 +163,15 @@ def _make_launchers(
     else:
         desc_q, desc_k, desc_v, desc_o = q, k, v, o
 
+    # trifast.bio.cuda_b wants [batch, i, h, j, d] operands (a permuted view is
+    # TMA-legal, so no copy is made), a [batch, 1, h, i, j] bias, and a mask that is
+    # True where a key is attended -- the inverse of TriFast's mask.
+    bio_q, bio_k, bio_v = (
+        t.unflatten(0, (-1, h)).transpose(1, 2) for t in (q, k, v)
+    )
+    bio_bias = bias.unflatten(0, (-1, h)).unsqueeze(1)
+    bio_mask = (~mask)[:, :, None, None, :]
+
     def fwd_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)
 
@@ -224,6 +241,9 @@ def _make_launchers(
             USE_TMA_BIAS=use_tma_bias,
             USE_TMA_MASK=use_tma_mask,
         )
+
+    def run_cuda_b() -> None:
+        cuda_b.triangle_attention(bio_q, bio_k, bio_v, bio_bias, bio_mask, sm_scale)
 
     def run_bwd_q() -> None:
         # Besides dq, this kernel produces delta for bwd_kv and bwd_b.
@@ -396,6 +416,7 @@ def _make_launchers(
         "bwd_q": run_bwd_q,
         "bwd_kv": run_bwd_kv,
         "bwd_b": run_bwd_b,
+        "cuda_b": run_cuda_b,
     }
 
 
@@ -413,7 +434,7 @@ def benchmark(n, dtype, kernel):
 
         # Populate o/mx/dn.  All backward kernels consume these values.
         launchers["fwd"]()
-        if kernel != "fwd":
+        if kernel.startswith("bwd"):
             # Populate delta.  This also compiles/tunes bwd_q before bwd_q itself
             # is timed and supplies the input needed by bwd_kv and bwd_b.
             launchers["bwd_q"]()
@@ -504,7 +525,7 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         choices=KERNELS,
         default=list(KERNELS),
-        help="kernels to benchmark (default: all four)",
+        help="kernels to benchmark (default: all)",
     )
     return parser.parse_args()
 
