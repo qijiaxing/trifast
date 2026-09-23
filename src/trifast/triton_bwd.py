@@ -123,8 +123,9 @@ def _bwd_bias_prep(
     b2t_ptr, stride_b2h, stride_b2k, stride_b2j,  # OUTPUT [BH, N, PADDED_N], (k, j)
     N,
     BLOCK: tl.constexpr,
+    SCALE: tl.constexpr = 1.4426950408889634,     # = 1.0 / ln(2)
 ):
-    """b2t[h, k, j] = b[h, j, k] * inv_ln2, in fp32.
+    """b2t[h, k, j] = b[h, j, k] * SCALE, in `b2t`'s dtype.
 
     Transposes, widens and scales the bias in one pass so `_bwd_fused` can fold it in with
     a single FFMA and no `extf`. See point 3 of the module docstring for why all three
@@ -141,8 +142,11 @@ def _bwd_bias_prep(
     it has to be: at `BLOCK_J=64, N=17` a j tile runs to 63, well past `PADDED_N = 32`,
     and would otherwise read the next k row rather than any pad.
     """
-    inv_ln2: tl.constexpr = 1.4426950408889634  # = 1.0 / ln(2)
-
+    # `SCALE` is `inv_ln2` for `_bwd_fused`, which wants the bias already in log2 units.
+    # `SCALE=1.0` leaves the bias untouched, which is what a *narrower* `b2t` needs: at
+    # bf16, rounding `b * inv_ln2` to 8 mantissa bits puts a 2e-3 relative error into an
+    # exponent, and the backward's recomputed weights then disagree with the forward's by
+    # ~1 %. An unscaled bf16 `b2t` is a bit-exact copy of the bf16 input instead.
     pid_j = tl.program_id(0)
     pid_k = tl.program_id(1)
     pid_h = tl.program_id(2)
@@ -158,7 +162,7 @@ def _bwd_bias_prep(
 
     b2t_ptrs = (b2t_ptr + pid_h * stride_b2h
                 + k_idxs[:, None] * stride_b2k + j_idxs[None, :] * stride_b2j)  # [k,j]
-    tl.store(b2t_ptrs, tl.trans(b_block) * inv_ln2, mask_k[:, None] & mask_j[None, :])
+    tl.store(b2t_ptrs, tl.trans(b_block) * SCALE, mask_k[:, None] & mask_j[None, :])
 
 
 @triton.jit
