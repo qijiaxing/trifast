@@ -20,6 +20,7 @@ struct Args {
     int* fix_total;                                              // int32[2] device census accumulator
     uint32_t const* maskw; uint8_t const* rowkind; int const* kcend; int const* kcstart;   // key-mask staging (null: no mask)
     int const* rowkc0; int const* rowkc1;                        // per-row first / one-past-last attended 32-key column
+    torch::Tensor& lse; torch::Tensor& mx; torch::Tensor& dn;    // trifast softmax statistics [B,N,H,S] fp32, identical strides
     unsigned long long* trace = nullptr;
     int force_fix = 0;                                           // debug (env TRIATTN_M1_FORCE_SAFE=1): every tile through the SAFE pass
 };
@@ -54,7 +55,8 @@ void launch_m1(Args const& a) {
 
     typename T::Params p{tma_q, tma_k, tma_v, tma_b, tma_bt, shape_qk, shape_b,
         reinterpret_cast<Element*>(a.out.data_ptr()), a.out.stride(0), a.out.stride(1), a.out.stride(2), a.out.stride(3),
-        S, N, H, n_qtiles, n_ktiles, float(a.scale), a.trace, int(a.q.size(3) >> 40), a.fix, a.fix_total, a.force_fix, a.maskw, a.rowkind, a.kcend, a.kcstart, n_kcol, a.rowkc0, a.rowkc1};   // zero: 0 for any real tensor, opaque to the compiler
+        S, N, H, n_qtiles, n_ktiles, float(a.scale), a.trace, int(a.q.size(3) >> 40), a.fix, a.fix_total, a.force_fix, a.maskw, a.rowkind, a.kcend, a.kcstart, n_kcol, a.rowkc0, a.rowkc1,
+        a.lse.data_ptr<float>(), a.mx.data_ptr<float>(), a.dn.data_ptr<float>(), a.lse.stride(0), a.lse.stride(1), a.lse.stride(2), a.lse.stride(3)};   // zero: 0 for any real tensor, opaque to the compiler
 
     int smem = sizeof(typename T::SharedStorage);
     static bool configured = false;   // per instantiation

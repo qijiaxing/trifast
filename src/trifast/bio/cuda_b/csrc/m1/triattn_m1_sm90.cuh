@@ -24,6 +24,11 @@
 //
 //   out[b,i,h,q,:] = softmax_k( scale * q[b,i,h,q,:].k[b,i,h,k,:] + bias[b,h,q,k] (-inf where mask[b,i,k] == 0) ) @ v[b,i,h,k,:]
 //
+//   trifast: the epilogue also stores the softmax statistics [B,N,H,S] fp32 in trifast's convention, P = 2^(x - mx) / dn with
+//   x = (scale * q.k + bias) * log2(e): mx = -nm and dn = l, the row's own offset and row sum (the max-free hot pass leaves mx ~64 log2
+//   units ABOVE the row max and dn ~2^-64; the SAFE pass leaves the exact max), lse = (mx + log2 dn) * ln 2 (natural log). (Here mask ==
+//   the attended-key mask; the binding inverts trifast's True = masked mask while packing it into words.)
+//
 // Grid x = q-tiles, y = row triples, z = b*H + h.
 #pragma once
 
@@ -192,6 +197,7 @@ struct Traits {
         int wpr;                                                       // mask words per row = 4 * (n_ktiles + 1)
         int const* rowkc0;                                             // [B, N]: the row's first 32-key column holding an attended key
         int const* rowkc1;                                             // [B, N]: one past the row's last such column (0, 0 for a fully-masked row)
+        float* lse; float* mx; float* dn; int64_t st_b, st_n, st_h, st_s;   // trifast softmax statistics [B,N,H,S] fp32, one set of element strides for all three
     };
 };
 
@@ -1118,6 +1124,13 @@ __global__ void __launch_bounds__(T::kNumThreads, 1) triattn_m1_kernel(CUTE_GRID
                 }
                 float const inv = l > 0.f ? 1.f / l : 0.f;
                 int const q = qtile * kBlockM + 64 * hh + get<0>(tOcO_rc(mi, _0{}));
+                if (q < S && (lane & 3) == 0) {                                              // the quad's 4 threads share the row: one stores its statistics
+                    int64_t const so = (int64_t)b * params.st_b + (int64_t)i * params.st_n + (int64_t)h * params.st_h + (int64_t)q * params.st_s;
+                    float const mx2 = -nm[hh][mi];                                           // P = 2^(x - mx2) / l for every key of the row
+                    params.mx[so] = mx2;
+                    params.dn[so] = l;
+                    params.lse[so] = (mx2 + __log2f(l)) * 0.6931471805599453f;
+                }
                 if (q < S) {
                     Element* orow = obase + (int64_t)q * params.so_s;
                     #pragma unroll

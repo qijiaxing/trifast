@@ -164,13 +164,13 @@ def _make_launchers(
         desc_q, desc_k, desc_v, desc_o = q, k, v, o
 
     # trifast.bio.cuda_b wants [batch, i, h, j, d] operands (a permuted view is
-    # TMA-legal, so no copy is made), a [batch, 1, h, i, j] bias, and a mask that is
-    # True where a key is attended -- the inverse of TriFast's mask.
+    # TMA-legal, so no copy is made), a [batch, 1, h, i, j] bias, and a
+    # [batch, i, 1, 1, k] mask with TriFast's True = masked convention.
     bio_q, bio_k, bio_v = (
         t.unflatten(0, (-1, h)).transpose(1, 2) for t in (q, k, v)
     )
     bio_bias = bias.unflatten(0, (-1, h)).unsqueeze(1)
-    bio_mask = (~mask)[:, :, None, None, :]
+    bio_mask = mask[:, :, None, None, :]
 
     def fwd_grid(meta):
         return (triton.cdiv(n, meta["BLOCK_J"]), n, bh)

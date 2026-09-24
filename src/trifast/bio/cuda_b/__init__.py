@@ -5,33 +5,37 @@ scale staged once per call in fp32 MMA-fragment order. CTA tiles the max-free pa
 finish are recomputed by an exact SAFE instantiation via a fix list. Fully-masked rows return
 the uniform mean of v.
 
-csrc/ is verbatim (only the m1/ kernel and the fa3_utils.h it includes); this wrapper is trimmed
-from triattn_m1.py. The extension is loaded from prebuilt/<stack tag>/ -- their binaries,
-CUTLASS v4.7.1 -- when one matches this torch / CPython, else JIT-built.
-TRIFAST_BIO_PREBUILT=never forces the JIT build.
+csrc/ holds the m1/ kernel and the fa3_utils.h it includes, changed from upstream in two ways:
+the mask is True = masked (trifast's convention), and the kernel also returns trifast's softmax
+statistics. Their prebuilt binaries therefore no longer apply; the extension is JIT-built on
+first use.
+
+Statistics, [B, N, H, S] fp32 each, with x = (scale * q.k + bias) * log2(e) the base-two logit:
+
+    P = exp2(x - mx) / dn          (what trifast's backward reconstructs)
+    lse = (mx + log2(dn)) * ln(2)  (natural-log logsumexp, as trifast's lse)
+
+lse is exact. mx and dn are a consistent pair but NOT trifast's values: the max-free pass never
+tracks the row max, so mx sits ~64 above it and dn is ~2^-64 (tiles recomputed by the SAFE pass
+do hold the exact max). dn sums the bf16-rounded P that the PV product used. A fully-masked row
+gets trifast's values for S logits of MASK_FILL: mx = MASK_FILL * log2(e), dn = S.
 """
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import math
 import os
-import sys
 from typing import Optional
 
 import torch
 
-from trifast.bio import NVCC_FLAGS, Unsupported, check_device, cutlass_include, stack_tag, tma_ok
+from trifast.bio import NVCC_FLAGS, Unsupported, check_device, cutlass_include, tma_ok
+from trifast.torch import MASK_FILL
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _EXT = None
-# Where _EXT came from: "prebuilt:<path>" or "jit".
-BINARY = None
-# Hot instantiations; each gets its SAFE (fix-list) partner, flags | 1024. The prebuilt
-# binaries hold exactly {0, 1024}.
+# Hot instantiations; each gets its SAFE (fix-list) partner, flags | 1024.
 FLAGS = [0]
-_PREBUILT_NAME = "triattn_m1_ext"
 
 
 def _all_flags():
@@ -61,22 +65,9 @@ def _generate_sources(build_dir: str):
     return srcs, inst
 
 
-def _load_prebuilt(path: str):
-    loader = importlib.machinery.ExtensionFileLoader(_PREBUILT_NAME, path)
-    spec = importlib.util.spec_from_file_location(_PREBUILT_NAME, path, loader=loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    sys.modules[_PREBUILT_NAME] = mod
-    return mod
-
-
 def _build(verbose: bool = False):
-    global _EXT, BINARY
+    global _EXT
     if _EXT is not None:
-        return _EXT
-    so = os.path.join(_HERE, "prebuilt", stack_tag(), _PREBUILT_NAME + ".so")
-    if os.environ.get("TRIFAST_BIO_PREBUILT", "auto") != "never" and os.path.isfile(so):
-        _EXT, BINARY = _load_prebuilt(so), "prebuilt:" + so
         return _EXT
     from torch.utils.cpp_extension import _get_build_directory, load
 
@@ -91,7 +82,6 @@ def _build(verbose: bool = False):
         extra_cflags=["-O3", "-std=c++17"],
         verbose=verbose,
     )
-    BINARY = "jit"
     return _EXT
 
 
@@ -113,7 +103,8 @@ def triangle_attention(
     bias: torch.Tensor,
     mask: Optional[torch.Tensor] = None,
     scale: Optional[float] = None,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Returns (out, lse, mx, dn); mask is True where a key is masked."""
     if q.dim() != 5:
         raise Unsupported(f"cuda_b: q/k/v must be [B,N,H,S,D]; got rank {q.dim()}")
     B, N, H, S, D = q.shape
@@ -144,11 +135,16 @@ def triangle_attention(
     fix = torch.empty(1 + 3 * n_ctas, dtype=torch.int32, device=q.device)
     bias_staged = ext.stage_bias(bias, float(scale), keyany, fix)
     out = torch.empty(B, N, H, S, D, dtype=q.dtype, device=q.device)
+    # The kernel takes one set of strides for all three statistics.
+    lse = torch.empty(B, N, H, S, dtype=torch.float32, device=q.device)
+    mx = torch.empty_like(lse)
+    dn = torch.empty_like(lse)
     ext.fwd(
-        q, k, v, bias_staged, float(scale), out, fix, _device_buffer(_FIX_TOTAL, q.device),
+        q, k, v, bias_staged, float(scale), out, lse, mx, dn, float(MASK_FILL),
+        fix, _device_buffer(_FIX_TOTAL, q.device),
         maskw, rowkind, kcend, kcstart, rowkc0, rowkc1, 0, None,
     )
-    return out
+    return out, lse, mx, dn
 
 
-__all__ = ["triangle_attention", "Unsupported", "BINARY"]
+__all__ = ["triangle_attention", "Unsupported"]

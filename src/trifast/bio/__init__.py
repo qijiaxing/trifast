@@ -7,11 +7,12 @@ Copied from common/opt_core/opt_core/kernels/triattn/triattn_native/pkg/v11/tria
 Their cuda/ kernel (triattn_sm90.cuh) was measured ~10% slower than trifast's _fwd at every N
 and dropped. Kernels here are forward only, bf16, D == 32, with one calling convention:
 
-    out = triangle_attention(q, k, v, bias, mask=None, scale=None)
+    out, lse, mx, dn = triangle_attention(q, k, v, bias, mask=None, scale=None)
 
 q, k, v: [B, N, H, S, D] (stride(-1) == 1 and the other strides multiples of 8 elements, so a
 permuted trifast [B, H, N, S, D] tensor needs no copy); bias: [B, 1, H, S, S] shared by the N
-rows; mask: [B, N, 1, 1, S] bool, True = ATTEND (the opposite of trifast's mask).
+rows; mask: [B, N, 1, 1, S] bool, True = masked (trifast's convention). out is [B, N, H, S, D];
+lse, mx, dn are [B, N, H, S] fp32 softmax statistics in trifast's convention (see cuda_b).
 
 The extensions need CUTLASS headers when JIT-built: $CUTLASS_PATH, else /opt/cutlass, else the
 copy bundled with flashinfer.
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import sysconfig
 
 import torch
 
@@ -47,11 +47,6 @@ NVCC_FLAGS = [
     "-gencode", "arch=compute_90a,code=sm_90a", "-DNDEBUG", "-DCUTE_SM90_EXTENDED_MMA_SHAPES_ENABLED",
     "--ftemplate-backtrace-limit=0", "-lineinfo", "-Xcompiler", "-Wno-psabi", "-diag-suppress", "177,550",
 ]
-
-
-def stack_tag() -> str:
-    """torch<version>-<CPython SOABI>: the key of a prebuilt directory."""
-    return f"torch{torch.__version__}-{sysconfig.get_config_var('SOABI')}"
 
 
 def tma_ok(t: torch.Tensor) -> bool:

@@ -71,7 +71,7 @@ torch::Tensor stage_bias_m1(torch::Tensor const& bias, double scale, c10::option
     return out;
 }
 
-// ---- key-mask staging: mask [B, N, 1, 1, S] bool (any strides) ->
+// ---- key-mask staging: mask [B, N, 1, 1, S] bool (any strides), True = key MASKED (trifast's convention, inverted here) ->
 //      words  [B, N, W4] u32: bit key%32 of word key/32 = row attends key (W4 = 4 * nk words, zero-padded)
 //      keyany [B, W4]    u32: OR over the rows (must be zeroed by the caller)
 //      rowkind[B, N]     u8 : 0 = row words == keyany (served by the -inf columns folded into the staged bias), 1 = irregular INTERVAL (the row
@@ -86,7 +86,7 @@ __global__ void mask_words_kernel(bool const* __restrict__ mask, int64_t sb, int
     int const wi = blockIdx.x * 8 + int(threadIdx.x >> 5), lane = threadIdx.x & 31;
     if (wi >= W4) { return; }
     int const key = wi * 32 + lane;
-    bool const bit = key < S && mask[int64_t(b) * sb + int64_t(i) * sn + int64_t(key) * sk];
+    bool const bit = key < S && !mask[int64_t(b) * sb + int64_t(i) * sn + int64_t(key) * sk];   // attended = not masked
     uint32_t const word = __ballot_sync(0xffffffffu, bit);
     if (lane == 0) {
         words[(int64_t(b) * N + i) * W4 + wi] = word;
@@ -124,10 +124,12 @@ __global__ void mask_rows_kernel(uint32_t const* __restrict__ words, uint32_t co
 
 // fully-masked rows (rowkind == 2): out[b,i,h,q,:] = mean over the S keys of v[b,i,h,:,:] for every q (cuEquivariance's convention),
 // overwriting whatever the attention kernel stored for them (a CTA tile whose rows are all fully masked computes and stores nothing).
+// Their statistics are trifast's for a row of S finite mask_fill logits: mx = mask_fill * log2(e), dn = S, lse = (mx + log2 S) * ln 2.
 // grid (N, B*H), 128 threads; other rows exit immediately.
 __global__ void uniform_rows_kernel(__nv_bfloat16 const* __restrict__ v, int64_t vb, int64_t vn, int64_t vh, int64_t vs,
                                     __nv_bfloat16* __restrict__ out, int64_t ob, int64_t on, int64_t oh, int64_t os_,
-                                    uint8_t const* __restrict__ rowkind, int N, int H, int S) {
+                                    float* __restrict__ lse, float* __restrict__ mx, float* __restrict__ dn, int64_t tb, int64_t tn, int64_t th, int64_t ts,
+                                    float mask_fill, uint8_t const* __restrict__ rowkind, int N, int H, int S) {
     int const i = blockIdx.x, bh = blockIdx.y, b = bh / H, h = bh % H;
     if (rowkind[int64_t(b) * N + i] != 2) { return; }
     __shared__ float part[4][32];
@@ -141,6 +143,9 @@ __global__ void uniform_rows_kernel(__nv_bfloat16 const* __restrict__ v, int64_t
     __nv_bfloat16 const mv = __float2bfloat16_rn(mean);
     __nv_bfloat16* orow = out + b * ob + int64_t(i) * on + h * oh;
     for (int q = g; q < S; q += 4) { orow[int64_t(q) * os_ + d] = mv; }
+    float const mx2 = mask_fill * 1.4426950408889634f, lse_ = (mx2 + log2f(float(S))) * 0.6931471805599453f;
+    int64_t const tbase = b * tb + int64_t(i) * tn + h * th;
+    for (int q = threadIdx.x; q < S; q += blockDim.x) { mx[tbase + q * ts] = mx2; dn[tbase + q * ts] = float(S); lse[tbase + q * ts] = lse_; }
 }
 
 // returns {words [B,N,W4] i32, keyany [B,W4] i32, rowkind [B,N] u8, kcend [B] i32, kcstart [B] i32, rowkc0 [B,N] i32, rowkc1 [B,N] i32}; counts [2] i32 is accumulated in place
@@ -176,7 +181,10 @@ int64_t smem_bytes(int64_t flags) {
 }
 
 // hot pass (flags) then the SAFE pass (flags | 1024) over the fix list the hot pass wrote into `fix` ([1 + 3 * n_ctas] int32, fix[0] zeroed by stage_bias)
+// lse / mx / dn: [B,N,H,S] fp32 with identical strides, trifast's softmax statistics (triattn_m1_sm90.cuh header); mask_fill: trifast's
+// finite masked-logit value, which only the statistics of fully-masked rows depend on
 void fwd(torch::Tensor const& q, torch::Tensor const& k, torch::Tensor const& v, torch::Tensor const& bias_staged, double scale, torch::Tensor& out,
+         torch::Tensor& lse, torch::Tensor& mx, torch::Tensor& dn, double mask_fill,
          torch::Tensor& fix, torch::Tensor& fix_total, c10::optional<torch::Tensor> const& maskw, c10::optional<torch::Tensor> const& rowkind, c10::optional<torch::Tensor> const& kcend,
          c10::optional<torch::Tensor> const& kcstart, c10::optional<torch::Tensor> const& rowkc0, c10::optional<torch::Tensor> const& rowkc1,
          int64_t flags, c10::optional<torch::Tensor> const& trace) {
@@ -185,12 +193,16 @@ void fwd(torch::Tensor const& q, torch::Tensor const& k, torch::Tensor const& v,
     TORCH_CHECK(hot != table().end() && safe != table().end(), "no M1 kernel pair instantiated for flags=", flags);
     TORCH_CHECK(q.scalar_type() == torch::kBFloat16 && k.scalar_type() == torch::kBFloat16 && v.scalar_type() == torch::kBFloat16, "q/k/v must be bf16");
     TORCH_CHECK(fix.scalar_type() == torch::kInt32 && fix.is_contiguous(), "fix list must be contiguous int32");
+    for (auto const* t : {&lse, &mx, &dn}) {
+        TORCH_CHECK(t->scalar_type() == torch::kFloat32 && t->dim() == 4 && t->sizes() == q.sizes().slice(0, 4) && t->strides() == lse.strides(),
+                    "lse / mx / dn must be [B,N,H,S] fp32 with identical strides");
+    }
     unsigned long long* tr = trace.has_value() ? reinterpret_cast<unsigned long long*>(trace->data_ptr<int64_t>()) : nullptr;
     Args a{q, k, v, bias_staged, scale, out, fix.data_ptr<int>(), fix_total.data_ptr<int>(),
            maskw.has_value() ? reinterpret_cast<uint32_t const*>(maskw->data_ptr<int>()) : nullptr,
            rowkind.has_value() ? rowkind->data_ptr<uint8_t>() : nullptr, kcend.has_value() ? kcend->data_ptr<int>() : nullptr,
            kcstart.has_value() ? kcstart->data_ptr<int>() : nullptr,
-           rowkc0.has_value() ? rowkc0->data_ptr<int>() : nullptr, rowkc1.has_value() ? rowkc1->data_ptr<int>() : nullptr, tr};
+           rowkc0.has_value() ? rowkc0->data_ptr<int>() : nullptr, rowkc1.has_value() ? rowkc1->data_ptr<int>() : nullptr, lse, mx, dn, tr};
     { char const* ff = getenv("TRIATTN_M1_FORCE_SAFE"); a.force_fix = (ff != nullptr && ff[0] == '1') ? 1 : 0; }   // debug: exact pass for every tile
     hot->second.run(a);
     safe->second.run(a);
@@ -199,7 +211,8 @@ void fwd(torch::Tensor const& q, torch::Tensor const& k, torch::Tensor const& v,
         uniform_rows_kernel<<<dim3(N, B * H), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
             reinterpret_cast<__nv_bfloat16 const*>(v.data_ptr()), v.stride(0), v.stride(1), v.stride(2), v.stride(3),
             reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), out.stride(0), out.stride(1), out.stride(2), out.stride(3),
-            rowkind->data_ptr<uint8_t>(), N, H, S);
+            lse.data_ptr<float>(), mx.data_ptr<float>(), dn.data_ptr<float>(), lse.stride(0), lse.stride(1), lse.stride(2), lse.stride(3),
+            float(mask_fill), rowkind->data_ptr<uint8_t>(), N, H, S);
         C10_CUDA_KERNEL_LAUNCH_CHECK();
     }
 }
@@ -207,8 +220,8 @@ void fwd(torch::Tensor const& q, torch::Tensor const& k, torch::Tensor const& v,
 }  // namespace triattn_m1
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fwd", &triattn_m1::fwd, "triangle attention forward, M1 consumer (sm_90a)");
+    m.def("fwd", &triattn_m1::fwd, "triangle attention forward, M1 consumer (sm_90a), with trifast's softmax statistics");
     m.def("smem_bytes", &triattn_m1::smem_bytes);
     m.def("stage_bias", &triattn_m1::stage_bias_m1, "pair bias -> M1 fragment-order fp32 staging (bias / scale), batch-OR-masked keys folded to -inf");
-    m.def("stage_mask", &triattn_m1::stage_mask_m1, "key mask -> per-row words, batch OR words, row kinds, batch and per-row attended key-column extents");
+    m.def("stage_mask", &triattn_m1::stage_mask_m1, "key mask (True = masked) -> per-row words, batch OR words, row kinds, batch and per-row attended key-column extents");
 }
